@@ -14,58 +14,74 @@
 
 \section*{Introdução}
 
-Para o nosso sistema de pHealth para insuficiência cardíaca contactámos utentes
-que possuem elevado conhecimento sobre a sua condição clínica (profissionais de
-saúde). O objetivo foi compreender quais as questões clínicas e funcionais mais relevantes
-para a monitorização, quais os parâmetros fisiológicos que devem ser monitorizados e qual a
-infraestrutura técnica necessária para a recolha e processamento desses dados.
+O presente trabalho insere-se no desenvolvimento de um sistema de
+telemonitorização de saúde (\textit{pHealth}) destinado a doentes cardíacos com
+miocardiopatia pós-inflamatória.
 
+Com o objetivo de fundamentar a arquitetura técnica e funcional do sistema,
+realizou-se uma consulta especializada junto de profissionais de saúde com
+profundo conhecimento clínico e experiência prática no acompanhamento desta
+patologia. Esta abordagem permitiu identificar os requisitos clínicos críticos
+e os parâmetros fisiológicos mais relevantes para uma monitorização eficaz bem
+como entender as necessidades e principais desafios para os utentes.
+
+Especificamente, buscou-se compreender:
+\begin{itemize}
+    \item O perfil clínico e funcional típico dos doentes com esta patologia
+    \item Quais os parâmetros fisiológicos que devem ser monitorizados continuamente ou
+          periodicamente;
+    \item O estado da arte em termos de aparelhos e tecnologias de monitorização
+          disponíveis atualmente no mercado;
+    \item Qual a infraestrutura técnica necessária para a recolha, processamento e
+          armazenamento desses dados de forma segura e eficiente.
+\end{itemize}
 
 \section*{Questões Clínicas e Funcionais Avançadas}
 
-Nesta secção, destacamos as questões clínicas e funcionais mais relevantes para a monitorização de doentes com insuficiência cardíaca.
+\subsection*{Caracterização Clínica}
 
-\subsection*{Sintomas e Descompensação}
+A miocardiopatia pós-inflamatória é uma condição complexa causada pela
+inflamação do músculo cardíaco (miocárdio), frequentemente com componente
+genética associada. Esta patologia resulta em disfunção significativa do
+sistema de condução elétrica do coração, levando tipicamente a manifestações
+clínicas que requerem monitorização rigorosa.
 
+\subsection*{Importância da Monitorização de Frequência e Ritmo Cardíaco}
+
+Um dos aspetos críticos nestes doentes é a alteração da frequência cardíaca.
+Enquanto alguns apresentam taquicardia (frequência elevada) como resposta à
+disfunção miocárdica, outros podem desenvolver bradicardia excessiva induzida
+pela medicação. Por este motivo, é fundamental monitorizar continuamente tanto
+a frequência cardíaca como o ritmo cardíaco, de modo a:
 \begin{itemize}
-    \item Alterações recentes na dispneia (ex.: classe funcional NYHA percebida)
-    \item Variação diária de peso e retenção hídrica
-    \item Frequência e duração de episódios de palpitações ou arritmias
-    \item Ocorrência de hipotensão sintomática ou síncope
-    \item Limitação ao esforço comparativamente ao basal
+    \item Detetar e controlar episódios de taquicardia, frequentemente indicadores de
+          arritmias subjacentes;
+    \item Identificar bradicardia excessiva causada pelos fármacos utilizados no
+          tratamento;
+    \item Reconhecer precocemente padrões anormais que possam comprometer a perfusão
+          tecidular.
 \end{itemize}
 
-\subsection*{Autogestão e Terapêutica}
+\subsection*{Arritmias Potencialmente Fatais}
+
+A principal preocupação clínica, tanto para doentes como para profissionais de
+saúde, é a ocorrência de arritmias potencialmente fatais. As mais relevantes
+incluem:
 
 \begin{itemize}
-    \item Ajustes recentes na medicação (ex.: diuréticos)
-    \item Adesão ao regime terapêutico e monitorização domiciliária
-    \item Conhecimento de valores alvo (PA, FC, peso seco)
-    \item Eventos adversos ou efeitos secundários relevantes
+    \item \textbf{Fibrilhação auricular:} arritmia supraventricular que aumenta significativamente o risco de tromboembolismo;
+
+    \item \textbf{Extrasístoles ventriculares:} batimentos cardíacos prematuros originados nos ventrículos. Quando frequentes ou agrupadas, podem evoluir para arritmias mais graves;
+
+    \item \textbf{Fibrilhação ventricular:} uma das situações mais críticas, caracterizada por atividade elétrica caótica e desorganizada nos ventrículos. Nesta condição, 
+    a contração ventricular torna-se ineficaz, impedindo a ejeção de sangue adequada. A diástole extremamente curta não permite o enchimento ventricular, resultando em perda 
+    imediata da perfusão sistémica. Esta condição manifesta-se frequentemente com palpitações vigorosas e representa uma emergência médica absoluta, requerendo intervenção imediata 
+    (ressuscitação cardiopulmonar e desfibrilhação) para restaurar um ritmo cardíaco viável e prevenir morte súbita.
 \end{itemize}
 
-\subsection*{Histórico Técnico-Clinico}
-
-\begin{itemize}
-    \item Dispositivos implantáveis (pacemaker, ICD, CRT)
-    \item Resultados recentes de exames (ECG, ecocardiograma, BNP)
-    \item Internamentos ou intervenções recentes
-\end{itemize}
-
-\section*{Parâmetros Fisiológicos Monitorizados}
-
-A monitorização contínua ou periódica deve incluir:
-
-\begin{itemize}
-    \item Frequência cardíaca e variabilidade
-    \item Pressão arterial sistólica e diastólica
-    \item Saturação periférica de oxigénio
-    \item Peso corporal diário
-    \item Sinais ECG ou deteção de arritmias
-    \item Nível de atividade física e sono
-\end{itemize}
+Consequentemente, a detecção precoce e o reconhecimento rápido destas arritmias
+constituem objetivos prioritários da monitorização contínua.
 
 \section*{Infraestrutura Tecnológica}
-
-
+TODO
 \end{document}
