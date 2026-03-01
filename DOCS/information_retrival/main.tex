@@ -4,8 +4,10 @@
 \usepackage[T1]{fontenc}
 \usepackage{geometry}
 \geometry{margin=2.5cm}
+\usepackage{url}
 
-\title{Recolha de Informação e Infraestrutura Técnica para Monitorização de Doentes Cardíacos}
+\title{Recolha de Informação e Infraestrutura Técnica para Monitorização de 
+Doentes com Arritmias Ventriculares}
 \author{}
 \date{}
 
@@ -15,8 +17,8 @@
 \section*{Introdução}
 
 O presente trabalho insere-se no desenvolvimento de um sistema de
-telemonitorização de saúde (\textit{pHealth}) destinado a doentes cardíacos com
-miocardiopatia pós-inflamatória.
+telemonitorização de saúde (\textit{pHealth}) destinado a doentes que sofrem
+de arritmias ventriculares.
 
 Com o objetivo de fundamentar a arquitetura técnica e funcional do sistema,
 realizou-se uma consulta especializada junto de profissionais de saúde com
@@ -40,17 +42,22 @@ Especificamente, buscou-se compreender:
 
 \subsection*{Caracterização Clínica}
 
-A miocardiopatia pós-inflamatória é uma condição complexa causada pela
-inflamação do músculo cardíaco (miocárdio), frequentemente com componente
-genética associada. Esta patologia resulta em disfunção significativa do
-sistema de condução elétrica do coração, levando tipicamente a manifestações
-clínicas que requerem monitorização rigorosa.
+Segundo a definição do Serviço Nacional de Saúde: 
+
+A arritmia é um batimento cardíaco anormal. Assim, as alterações do ritmo do batimento cardíaco designam-se por arritmias e podem manifestar-se por:
+
+\begin{itemize}
+      \item Alterações da frequência com que se dá o batimento cardíaco: mais rápida ou mais lenta
+      \item Alterações da regularidade com que o batimento cardíaco ocorre
+\end{itemize}
+
+Algumas arritmias são consideradas benignas, mas outras podem ser fatais e originar morte súbita~\cite{SNS24Arritmias}.
 
 \subsection*{Importância da Monitorização de Frequência e Ritmo Cardíaco}
 
 Um dos aspetos críticos nestes doentes é a alteração da frequência cardíaca.
-Enquanto alguns apresentam taquicardia (frequência elevada) como resposta à
-disfunção miocárdica, outros podem desenvolver bradicardia excessiva induzida
+Enquanto alguns apresentam taquicardia (frequência elevada), 
+outros podem desenvolver bradicardia excessiva induzida
 pela medicação. Por este motivo, é fundamental monitorizar continuamente tanto
 a frequência cardíaca como o ritmo cardíaco, de modo a:
 \begin{itemize}
@@ -83,5 +90,28 @@ Consequentemente, a detecção precoce e o reconhecimento rápido destas arritmi
 constituem objetivos prioritários da monitorização contínua.
 
 \section*{Infraestrutura Tecnológica}
-TODOf
+Atualmente existemm alguns dispositivos acessíveis ao público que permitem monitorizar a frequência cardíaca, como os 
+smartwatches. No entanto, estes dispositivos apresentam algumas limitações sentidas 
+pelos utilizadores como por exemplo:
+\begin{itemize}
+      \item Mesmo dispositivos mais modernos com ECG integrado não 
+      oferecem diagnóstico pós teste (ex: Apple Watch permite ECG, mas não descreve o resultado
+      deixando a interpretação para o utilizador);
+      \item A monitorização de ritmo cardíaco é limitada, não fazendo ECG quando deteta 
+      alterações suspeitas de arritmia.
+      \item não deteta extrasístoles ventriculares, que são um dos principais indicadores de 
+      fibrilhação ventricular (patologia potencialmente fatal).
+\end{itemize}
+
+É, neste sentido, fundamental que a nossa solução de monitorização de saúde seja capaz de superar estas limitações, oferecendo:
+\begin{itemize}
+      \item Monitorização contínua e automática da frequência e ritmo cardíaco, com capacidade de
+      \item Detetar e registar episódios de taquicardia, bradicardia e arritmias potencialmente fatais;
+      \item Fornecer feedback imediato e claro ao utilizador, incluindo alertas para episódios      críticos e recomendações de ação;
+      \item Garantir a segurança e privacidade dos dados recolhidos, com armazenamento seguro e acesso controlado.
+\end{itemize}
+
+\bibliographystyle{plain}
+\bibliography{references}
+
 \end{document}
