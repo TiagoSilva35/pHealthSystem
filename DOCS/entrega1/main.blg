@@ -1,0 +1,59 @@
+This is BibTeX, Version 0.99d (TeX Live 2023/Debian)
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: main.aux
+The style file: IEEEtran.bst
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Reallocated wiz_functions (elt_size=4) to 6000 items from 3000.
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Database file #1: remote_arrhythmias.bib
+Warning--entry type for "ine_mortality" isn't style-file defined
+--line 94 of file remote_arrhythmias.bib
+-- IEEEtran.bst version 1.14 (2015/08/26) by Michael Shell.
+-- http://www.michaelshell.org/tex/ieeetran/bibtex/
+-- See the "IEEEtran_bst_HOWTO.pdf" manual for usage information.
+
+Done.
+You've used 6 entries,
+            4087 wiz_defined-function locations,
+            859 strings with 8191 characters,
+and the built_in function-call counts, 3490 in all, are:
+= -- 300
+> -- 55
+< -- 19
++ -- 29
+- -- 10
+* -- 171
+:= -- 622
+add.period$ -- 12
+call.type$ -- 6
+change.case$ -- 9
+chr.to.int$ -- 39
+cite$ -- 6
+duplicate$ -- 252
+empty$ -- 270
+format.name$ -- 12
+if$ -- 764
+int.to.chr$ -- 0
+int.to.str$ -- 6
+missing$ -- 51
+newline$ -- 49
+num.names$ -- 6
+pop$ -- 120
+preamble$ -- 1
+purify$ -- 0
+quote$ -- 2
+skip$ -- 263
+stack$ -- 0
+substring$ -- 102
+swap$ -- 187
+text.length$ -- 6
+text.prefix$ -- 0
+top$ -- 5
+type$ -- 6
+warning$ -- 0
+while$ -- 14
+width$ -- 7
+write$ -- 89
+(There was 1 warning)

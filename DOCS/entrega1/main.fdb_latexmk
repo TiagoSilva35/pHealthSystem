@@ -1,15 +1,15 @@
 # Fdb version 4
-["bibtex main"] 0 "main.aux" "main.bbl" "main" 1772477008.5724 -1
-  "./remote_arrhythmias.bib" 1772476825.85037 2542 659edb67b7a82ca76e8954f05a75d072 ""
+["bibtex main"] 1772480506.5005 "main.aux" "main.bbl" "main" 1772480507.06605 0
+  "./remote_arrhythmias.bib" 1772480225.38431 4496 3fb815a1826a1c140aa391e66cb75571 ""
   "/usr/share/texlive/texmf-dist/bibtex/bst/ieeetran/IEEEtran.bst" 1440712899 57748 7c8250ecf02814ce6ddc0cdbb63df1dd ""
-  "main.aux" 1772477008.48465 4512 5ba30e9380846384905dc04dba81e6ee "pdflatex"
+  "main.aux" 1772480506.94052 4056 f22e26572e31b477319ef578e456a5fa "pdflatex"
   (generated)
   "main.bbl"
   "main.blg"
   (rewritten before read)
-["pdflatex"] 1772477008.09461 "/home/tiago/pHealthSystem/DOCS/entrega1/main.tex" "main.pdf" "main" 1772477008.57262 0
+["pdflatex"] 1772480506.52684 "/home/tiago/pHealthSystem/DOCS/entrega1/main.tex" "main.pdf" "main" 1772480507.06629 0
   "/etc/texmf/web2c/texmf.cnf" 1772390608.86954 475 c0e671620eb5563b2130f56340a5fde8 ""
-  "/home/tiago/pHealthSystem/DOCS/entrega1/main.tex" 1772477007.79997 14489 4c4a5f468607136181085b555238a4b1 ""
+  "/home/tiago/pHealthSystem/DOCS/entrega1/main.tex" 1772480506.88419 8875 51fc737b9277365648ef0e55956fd71d ""
   "/usr/share/texlive/texmf-dist/fonts/enc/dvips/base/8r.enc" 1165713224 4850 80dc9bab7f31fb78a000ccfed0e27cab ""
   "/usr/share/texlive/texmf-dist/fonts/map/fontname/texfonts.map" 1577235249 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/adobe/times/ptmb7t.tfm" 1136768653 2172 fd0c924230362ff848a33632ed45dc23 ""
@@ -90,10 +90,10 @@
   "/usr/share/texmf/web2c/texmf.cnf" 1707919699 40399 f2c302f7d2af602abb742093540a5834 ""
   "/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map" 1772470848.36478 128028 f533b797fba58d231669ea19e894e23e ""
   "/var/lib/texmf/web2c/pdftex/pdflatex.fmt" 1772470897 6801898 4a2575adb3c33c734ef2702ddf41135c ""
-  "main.aux" 1772477008.48465 4512 5ba30e9380846384905dc04dba81e6ee "pdflatex"
-  "main.bbl" 1772476823.24599 2154 185ae8473f7c0989ff365e42870d8a98 "bibtex main"
-  "main.out" 1772477008.48465 5288 768221d5b72fa149ee8236ba751c98ad "pdflatex"
-  "main.tex" 1772477007.79997 14489 4c4a5f468607136181085b555238a4b1 ""
+  "main.aux" 1772480506.94052 4056 f22e26572e31b477319ef578e456a5fa "pdflatex"
+  "main.bbl" 1772480506.52018 2302 0c335a1a8785df54ffa135a12c782396 "bibtex main"
+  "main.out" 1772480506.94486 4575 a5ac84c8b10eb059fdf89a1bb2e9b692 "pdflatex"
+  "main.tex" 1772480506.88419 8875 51fc737b9277365648ef0e55956fd71d ""
   (generated)
   "main.aux"
   "main.log"

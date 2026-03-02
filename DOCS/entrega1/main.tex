@@ -66,70 +66,50 @@ potentially life-threatening arrhythmias such as~\cite{ha_arrhythmias}:
           palpitation are common symptoms of VF which can lead to loss of consciousness
           and death if not treated immediately.
 \end{itemize}
-Therefore, early detection and fast recognition of these arrhythmias are paramount for effective management and prevention of adverse outcomes.
-This paper reviews the state of the art based on scientific evidence to understand the current landscape of remote monitoring for arrythmias,
-with a focus on ventricular arrhythmias. We will explore the market context, existing technologies, clinical applications, and regulatory considerations to identify opportunities and challenges for future development in this field.
-\newline\newline
-ALERTA LUÍS - DAQUI PARA BAIXO É PRECISO REVER O TEXTO, POIS FOI ESCRITO DE
-FORMA APRESSADA E COM BASE EM AI + A PROPOSAL
+Therefore, early detection and fast recognition of these arrhythmias are paramount for effective management
+and prevention of adverse outcomes.This paper reviews the state of the art based on scientific evidence to
+understand the current landscape of remote monitoring for arrythmias, with a focus on ventricular
+arrhythmias. We will explore the market context, existing technologies, clinical applications,
+and regulatory considerations to identify opportunities and challenges for future development in this field.
 
 \section{Market: Incidence, Prevalence, Financing}
 
 \subsection{Incidence and Prevalence}
 
-Ventricular arrhythmias occur primarily in patients with structural heart
-disease, ischemic cardiomyopathy, or inherited channelopathies. Although less
-prevalent than atrial arrhythmias, they account for a large proportion of
-sudden cardiac deaths.
+As mentioned before, Ventricular arrhythmias, including VT's and VF's,
+represent a major cause of sudden cardiac death (SCD) and constitute a
+significant public health burden. Their epidemiology is closely linked to
+underlying structural heart disease, particularly ischemic heart disease and
+cardiomyopathies.
 
-European epidemiological studies estimate hundreds of thousands of SCD cases
-annually across Europe. Incidence increases sharply with age and with
-comorbidities such as heart failure. Portugal mirrors these trends due to
-population ageing and high cardiovascular burden.
+In Portugal, according to recent data from the National Institute of Health
+Doutor Ricardo Jorge (INSA), a total of 119,117 deaths were registered in 2024.
+The leading causes of death were diseases of the circulatory system (25.4\%),
+from which ischemic heart disease and cerebrovascular diseases were the most
+common.~\cite{ine_mortality}
 
-Patients eligible for implantable defibrillators represent a key target
-population for remote monitoring systems.
+Across Europe, there's a similar pattern with cardiovascular diseases accounting
+for approximately 32.7\% of all deaths and, although specific data on ventricular arrhythmias 
+are limited, they are estimated to contribute significantly to the overall burden of
+cardiac-related mortality.~\cite{eurostat_deaths}
+
+Prevalence data for sustained ventricular arrhythmias are difficult to
+establish because many events occur suddenly and may be fatal. However,
+among patients with prior myocardial infarction or heart failure with
+reduced ejection fraction, the prevalence of clinically significant
+ventricular arrhythmias is substantially higher, making these populations
+key targets for monitoring and preventive interventions such as implantable
+cardioverter-defibrillators (ICDs).
+
+In patients without an ICD, noninvasive ambulatory electrocardiographic
+monitoring remains a cornerstone for arrhythmia detection. This includes
+short-term Holter monitoring, extended patch ECG systems, external loop
+recorders, and implantable loop recorders, which enable documentation of
+intermittent or asymptomatic ventricular arrhythmias~\cite{candinas_ventricular_1990}
 
 \subsection{Healthcare Burden}
-
-VAs lead to hospital admissions, emergency interventions, device therapies, and
-long-term management costs. Late detection significantly worsens outcomes.
-Continuous monitoring has been shown to reduce inappropriate shocks, hospital
-visits, and mortality risk.
-
 \subsection{Financing and Reimbursement Models}
-
-European countries exhibit heterogeneous reimbursement policies:
-
-\begin{itemize}
-    \item Public health service reimbursement for device follow-up
-    \item Bundled payments within cardiac care pathways
-    \item Device manufacturer service contracts
-    \item Pilot programmes and public-private partnerships
-\end{itemize}
-
-Portugal’s National Health Service (SNS) supports remote monitoring primarily
-for patients with implantable devices, though nationwide reimbursement
-frameworks remain evolving.
-
 \section{Existing Applications and Architectures}
-
-\subsection{Implantable Device Ecosystems}
-
-The most mature RPM solutions involve cardiac implantable electronic devices
-(CIEDs):
-
-\begin{itemize}
-    \item Implantable cardioverter-defibrillators (ICDs)
-    \item Cardiac resynchronisation therapy devices (CRT)
-    \item Implantable loop recorders (ILRs)
-\end{itemize}
-
-These devices transmit intracardiac electrograms and device status
-automatically to clinical platforms.
-
-Portuguese clinical studies demonstrate that remote follow-up of ICD patients
-is safe and reduces unnecessary clinic visits.
 
 \subsection{Ambulatory Monitoring Systems}
 
@@ -145,84 +125,26 @@ These systems provide higher diagnostic yield for intermittent arrhythmias than
 short clinical ECGs.
 
 \subsection{Consumer Wearables}
-
 Smartwatches and handheld ECG devices offer population-level screening.
 However, their diagnostic reliability for ventricular arrhythmias is limited
 compared to medical-grade devices.
 
 \subsection{System Architecture}
 
-Typical pHealth architecture:
-
-\begin{enumerate}
-    \item Sensing layer (ECG, PPG, device telemetry)
-    \item Edge processing (signal filtering, event detection)
-    \item Communication layer (Bluetooth, cellular, IoT)
-    \item Cloud backend (storage, analytics)
-    \item Clinical interface (dashboards, alerts)
-\end{enumerate}
-
-Integration with electronic health records is essential for clinical workflow
-adoption.
 
 \section{Diagnostic, Early Detection, and Prognosis}
-
 \subsection{Detection Capabilities}
 
-Continuous monitoring increases detection of paroxysmal arrhythmias that might
-otherwise remain unnoticed. Implantable devices provide the highest sensitivity
-due to continuous intracardiac recordings.
-
-External ECG patches also show high diagnostic yield compared to traditional
-Holter monitoring.
-
 \subsection{Early Diagnosis}
-
-Early identification of ventricular tachycardia or fibrillation allows timely
-clinical intervention, potentially preventing cardiac arrest. Remote monitoring
-can detect asymptomatic episodes and device malfunctions.
-
 \subsection{Prognostic Assessment}
-
-Arrhythmia burden, heart rate variability, and device therapy data are used to
-assess patient risk. Prognostic models help determine need for therapy
-adjustments or interventions.
-
-Machine learning methods are increasingly applied to predict adverse events
-using long-term physiological data.
 
 \section{Intervention and Therapeutic Dimensions}
 
 \subsection{Clinical Actions Enabled}
 
-RPM supports several therapeutic pathways:
-
-\begin{itemize}
-    \item Emergency response to life-threatening arrhythmias
-    \item Medication adjustment
-    \item Device reprogramming
-    \item Scheduling of urgent consultations
-    \item Reduction of routine visits
-\end{itemize}
-
 \subsection{Benefits for Healthcare Systems}
 
-Remote follow-up reduces travel burden for patients, improves continuity of
-care, and optimises clinical resource allocation.
-
-Portuguese experiences with remote ICD monitoring report high patient
-satisfaction and efficient service utilisation.
-
 \subsection{Limitations}
-
-Challenges include:
-
-\begin{itemize}
-    \item False alarms and alert fatigue
-    \item Connectivity issues
-    \item Data overload for clinicians
-    \item Legal responsibility for remote alerts
-\end{itemize}
 
 Clear clinical protocols are required to ensure safety.
 
@@ -230,53 +152,7 @@ Clear clinical protocols are required to ensure safety.
 
 \subsection{Sensors}
 
-\textbf{Implantable Sensors:}
-
-\begin{itemize}
-    \item Intracardiac electrogram electrodes
-    \item Continuous high-quality recordings
-\end{itemize}
-
-\textbf{External ECG Sensors:}
-
-\begin{itemize}
-    \item Chest patches
-    \item Multi-lead Holter systems
-    \item Portable ECG devices
-\end{itemize}
-
-\textbf{Photoplethysmography (PPG):}
-
-\begin{itemize}
-    \item Used in wearables
-    \item Suitable for rhythm irregularity screening
-    \item Limited morphological detail
-\end{itemize}
-
 \subsection{Algorithms}
-
-\textbf{Signal Processing Techniques:}
-
-\begin{itemize}
-    \item Noise filtering
-    \item QRS detection
-    \item Beat classification
-\end{itemize}
-
-\textbf{Machine Learning and Deep Learning:}
-
-\begin{itemize}
-    \item Convolutional neural networks
-    \item Recurrent neural networks
-    \item Hybrid architectures (auto-encoder with support vector
-          machines)\cite{ojha_autoencoder_svm}
-\end{itemize}
-
-These methods achieve high accuracy in controlled datasets but require
-validation in real-world conditions. Recent approaches combining auto-encoders
-with SVM classifiers have demonstrated over 98\% accuracy in detecting multiple
-arrhythmia types including bundle branch blocks and premature ventricular
-contractions.
 
 \subsection{Protocols and Interoperability}
 
@@ -320,47 +196,6 @@ referenced when defining development, risk and clinical evidence processes:
     \item MDCG guidance on cybersecurity and related safety controls.
     \item IMDRF SaMD framework for risk categorisation of software.
 \end{itemize}
-
-\subsection{Phase 1 deliverables (minimum)}
-To maintain regulatory traceability and reduce rework, Phase 1 should produce
-at least:
-\begin{enumerate}
-    \item A concise \textbf{Intended Use and Indications} statement for the software.
-    \item A \textbf{Preliminary MDR classification report} (Rule 11 analysis) with
-          rationale.
-    \item A \textbf{Regulatory gap analysis} listing MDR requirements, Annex I essential
-          requirements, and applicable harmonised standards.
-    \item A \textbf{High-level Software Development Plan} aligned to IEC 62304, including
-          assigned software safety class.
-    \item A \textbf{Risk Management Plan} per ISO 14971 (methods, acceptance criteria,
-          initial hazard list).
-    \item A \textbf{Clinical Evaluation Plan} (CEP) and a protocol for the literature
-          search to support state-of-the-art and clinical claims.
-    \item A \textbf{Cybersecurity and Data Protection Plan} covering threat modelling,
-          encryption, patching and incident response.
-    \item A \textbf{Verification and Validation strategy} outline and initial test matrix
-          (unit, integration, system, clinical performance tests).
-\end{enumerate}
-
-\subsection{Next steps and resources}
-Completing the Phase 1 regulatory package will enable an accurate estimate of
-certification effort (Notified Body involvement, clinical evidence needs, and
-QMS scope). It will also guide architecture choices (on-device vs cloud
-processing, data minimisation, etc.) that are constrained by security and
-privacy obligations.
-
-\section{Discussion}
-
-Remote monitoring of ventricular arrhythmias is transitioning from experimental
-technology to standard clinical practice. Implantable device ecosystems
-demonstrate the strongest evidence base, while wearable solutions continue to
-evolve.
-
-Portugal is progressively adopting these technologies, though challenges remain
-in reimbursement, infrastructure, and workforce organisation.
-
-Future systems will likely integrate advanced analytics, personalised risk
-models, and seamless interoperability across healthcare providers.
 
 \section{Conclusion}
 

@@ -38,7 +38,12 @@ C.~C.~U. de~Hospitais~Privados, ``Arritmias,'' CUF, accessed March 2, 2026. [Onl
 \bibitem{ha_arrhythmias}
 F.~Ha, T.~Chong, M.~Cook, and E.~Paratz, ``Epilepsy and cardiac arrhythmias: A state-of-the-art review,'' \emph{JACC Clinical Electrophysiology}, vol.~11, no.~1, pp. 217--229, 2025.
 
-\bibitem{ojha_autoencoder_svm}
-M.~K. Ojha, S.~Wadhwani, A.~K. Wadhwani, and A.~Shukla, ``Automatic detection of arrhythmias from an ecg signal using an auto-encoder and svm classifier,'' \emph{Physical and Engineering Sciences in Medicine}, vol.~45, no.~2, pp. 665--674, June 2022.
+\bibitem{ine_mortality}
+\BIBentryALTinterwordspacing
+{Instituto Nacional de Estatística}, ``Causes of death statistics,'' Lisbon, Portugal, 2023. [Online]. Available: \url{https://www.ine.pt}
+\BIBentrySTDinterwordspacing
+
+\bibitem{candinas_ventricular_1990}
+R.~A. Candinas and P.~J. Podrid, ``Noninvasive diagnosis of ventricular arrhythmias by means of ambulatory-ecg monitoring,'' \emph{Herz}, vol.~15, no.~1, pp. 1--10, 1990.
 
 \end{thebibliography}

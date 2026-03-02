@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2026.3.2)  2 MAR 2026 18:43
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2026.3.2)  2 MAR 2026 19:41
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -305,31 +305,14 @@ Underfull \hbox (badness 1721) in paragraph at lines 43--48
  []
 
 
-Underfull \hbox (badness 1466) in paragraph at lines 69--75
-\T1/ptm/m/n/10 Therefore, early de-tec-tion and fast recog-ni-tion of these
- []
+Underfull \vbox (badness 1331) has occurred while \output is active []
+
+ [1{/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/base/8r.enc}
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 69--75
-
- []
-
-
-Underfull \hbox (badness 2020) in paragraph at lines 69--75
-\T1/ptm/m/n/10 ALERTA LUÍS - DAQUI PARA BAIXO É PRE-CISO
- []
-
-[1{/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map}{/usr/share/texlive/texmf-dist/fonts/enc/dvips/base/8r.enc}
-
-
-] [2]
-Underfull \hbox (badness 2837) in paragraph at lines 318--320
+]
+Underfull \hbox (badness 2837) in paragraph at lines 194--196
 []\T1/ptm/m/n/10 MDCG guid-ance doc-u-ments on soft-ware qual-i-fi-ca-
- []
-
-
-Underfull \hbox (badness 2486) in paragraph at lines 359--361
-[]\T1/ptm/m/n/10 Portugal is pro-gres-sively adopt-ing these tech-nolo-gies,
  []
 
 (./main.bbl
@@ -337,7 +320,7 @@ LaTeX Font Info:    External font `cmex10' loaded for size
 (Font)              <8> on input line 25.
 LaTeX Font Info:    External font `cmex10' loaded for size
 (Font)              <6> on input line 25.
- [3])
+)
 
 ** Conference Paper **
 Before submitting the final camera ready copy, remember to:
@@ -349,29 +332,27 @@ Before submitting the final camera ready copy, remember to:
  uses only Type 1 fonts and that every step in the generation
  process uses the appropriate paper size.
 
-[4
-
-] (./main.aux)
+[2] (./main.aux)
  ***********
 LaTeX2e <2023-11-01> patch level 1
 L3 programming layer <2024-01-22>
  ***********
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: 768221D5B72FA149EE8236BA751C98AD;5288.
+(rerunfilecheck)             Checksum: A5AC84C8B10EB059FDF89A1BB2E9B692;4575.
  ) 
 Here is how much of TeX's memory you used:
- 9666 strings out of 476162
- 152715 string characters out of 5794815
- 1947975 words of memory out of 5000000
- 31519 multiletter control sequences out of 15000+600000
- 662234 words of font info for 132 fonts, out of 8000000 for 9000
+ 9642 strings out of 476162
+ 152486 string characters out of 5794815
+ 1946975 words of memory out of 5000000
+ 31514 multiletter control sequences out of 15000+600000
+ 661127 words of font info for 131 fonts, out of 8000000 for 9000
  16 hyphenation exceptions out of 8191
- 75i,8n,79p,354b,581s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,8n,79p,345b,511s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/times/utmbi8a.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
-Output written on main.pdf (4 pages, 85396 bytes).
+Output written on main.pdf (2 pages, 76549 bytes).
 PDF statistics:
- 212 PDF objects out of 1000 (max. 8388607)
- 194 compressed objects within 2 object streams
- 53 named destinations out of 1000 (max. 500000)
- 241 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 174 PDF objects out of 1000 (max. 8388607)
+ 158 compressed objects within 2 object streams
+ 35 named destinations out of 1000 (max. 500000)
+ 209 words of extra memory for PDF output out of 10000 (max. 10000000)
 
