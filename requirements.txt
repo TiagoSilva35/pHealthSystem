@@ -3,3 +3,4 @@ numpy
 pyserial
 pybluez2
 bitalino
+matplotlib
