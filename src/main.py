@@ -1,7 +1,7 @@
 import bitalino
 import time
 import numpy as np
-from helpers.constants import (
+from src.helpers.constants import (
     MAC_ADDRESS,
     BATTERY_THRESHOLD,
     CHANNELS,
@@ -13,7 +13,7 @@ from helpers.constants import (
     ECG_ANALOG_CHANNEL,
     ECG_OUTPUT_FILE,
 )
-from helpers.plot_signals import plot_signals
+from src.helpers.plot_signals import plot_signals
 
 
 if __name__ == "__main__":
