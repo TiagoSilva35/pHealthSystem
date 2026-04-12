@@ -83,7 +83,22 @@ def main():
             print(f"Running for {(time.time() - start_time):.1f} seconds... ", end="\r")    
             if RUNNING_TIME > 0 and (time.time() - start_time) >= RUNNING_TIME:
                 timeout_reached = True
-                break
+                print(f"\n[INFO] Reached specified running time of {RUNNING_TIME} seconds. Want to continue? (y/n): ", end="")
+                user_input = input().strip().lower()
+                if user_input == "n":
+                    print("[INFO] Stopping acquisition.")
+                    break
+                else:
+                    if ENABLE_LIVE_PLOT:
+                        for b in buffers:
+                            b.clear()
+                        for tb in time_buffers:
+                            tb.clear()
+                    total_samples = 0
+                    start_time = time.time()
+                    print("[INFO] Starting new acquisition period...")
+                    continue
+                    
 
             batch = device.read(NSAMPLES)
             analog_batch = extract_analog_signals(batch, len(channels))

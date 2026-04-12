@@ -1,5 +1,6 @@
 /pHealthVenv
 /.venv
+/.venv310
 .python-version
 __pycache__/
 *.pyc
