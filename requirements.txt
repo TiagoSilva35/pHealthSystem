@@ -4,3 +4,4 @@ pyserial
 pybluez2
 bitalino
 matplotlib
+scipy
