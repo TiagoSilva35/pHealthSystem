@@ -1,3 +1,6 @@
+#\venv\Scripts\Activate.ps1
+#run it: py src/process_ecg_csv.py --input ecg_samples.csv --output ecg_samples_cleaned.csv --plot ecg_cleaning_comparison.png    
+
 import argparse
 import sys
 from pathlib import Path
