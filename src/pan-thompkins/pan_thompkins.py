@@ -1,137 +1,104 @@
 import numpy as np
-from src.helpers.constants import SAMPLING_RATE
-from src.helpers.plot_signals import plot_signals
 import pandas as pd
+from scipy import signal
+# Assuming SAMPLING_RATE is imported from your constants
+from src.helpers.constants import SAMPLING_RATE 
+from src.helpers.plot_signals import plot_signals
 
+class Pan_Tompkins_QRS:
+    def __init__(self, fs=SAMPLING_RATE):
+        self.fs = fs
 
-class Pan_Tompkins_QRS():
-  def band_pass_filter(self,signal):
-    result = None
+    def band_pass_filter(self, ecg_signal):
+        """
+        Applies a 5-15 Hz bandpass filter. 
+        Uses filtfilt for zero-phase filtering to avoid peak delay.
+        """
+        nyq = 0.5 * self.fs
+        low = 5 / nyq
+        high = 15 / nyq
+        # 4th order Butterworth filter 
+        b, a = signal.butter(4, [low, high], btype='band')
+        filtered_ecg = signal.filtfilt(b, a, ecg_signal)
+        return filtered_ecg
 
-    # Create a copy of the input signal
-    sig = signal.copy()
-	
-    # Apply the low pass filter using the equation given
-    for index in range(len(signal)):
-      sig[index] = signal[index]
+    def derivative(self, ecg_signal):
+        """Standard Pan-Tompkins derivative filter"""
+        return np.diff(ecg_signal, prepend=ecg_signal[0])
 
-      if (index >= 1):
-        sig[index] += 2*sig[index-1]
+    def squaring(self, ecg_signal):
+        """Amplify QRS complex and ensure positive values"""
+        return np.square(ecg_signal)
 
-      if (index >= 2):
-        sig[index] -= sig[index-2]
+    def moving_window_integration(self, ecg_signal):
+        """
+        Calculates the energy envelope using a moving average window.
+        
+        """
+        window_size = int(0.150 * self.fs)
+        # Using convolution for a more efficient moving average [cite: 28]
+        return np.convolve(ecg_signal, np.ones(window_size)/window_size, mode='same')
 
-      if (index >= 6):
-        sig[index] -= 2*signal[index-6]
+    def detect_peaks(self, mwin_signal):
+        """
+        Applies adaptive thresholding and physiological constraints.
+        """
+        peaks = []
+        # Initial adaptive threshold: 0.7 * mean of the energy signal 
+        threshold = 0.7 * np.mean(mwin_signal)
+        # Refractory period: ~0.3s (physiologically impossible to have 2 beats) 
+        refractory_samples = int(0.3 * self.fs)
+        
+        last_peak_idx = -refractory_samples
+        
+        for i in range(1, len(mwin_signal) - 1):
+            # 1. Local peak detection
+            if mwin_signal[i] > mwin_signal[i-1] and mwin_signal[i] > mwin_signal[i+1]:
+                # 2. Thresholding
+                if mwin_signal[i] > threshold:
+                    # 3. Refractory period check
+                    if (i - last_peak_idx) > refractory_samples:
+                        peaks.append(i)
+                        last_peak_idx = i
+                        # Update threshold adaptively based on the latest peak
+                        threshold = 0.5 * threshold + 0.5 * (0.7 * mwin_signal[i])
+        
+        return np.array(peaks)
 
-      if (index >= 12):
-        sig[index] += signal[index-12] 
-	
-    # Copy the result of the low pass filter
-    result = sig.copy()
+    def solve(self, signal_df):
+        # 1. Extract raw signal
+        raw_signal = signal_df.iloc[:, 1].to_numpy()
+        
+        # 2. Pre-processing steps
+        bpass = self.band_pass_filter(raw_signal)
+        der = self.derivative(bpass)
+        sqr = self.squaring(der)
+        mwin = self.moving_window_integration(sqr)
+        
+        # 3. Decision Logic (Thresholding)
+        peaks_indices = self.detect_peaks(mwin)
+        
+        # Return the energy envelope for plotting and the detected peak indices
+        return mwin, peaks_indices
 
-    # Apply the high pass filter using the equation given
-    for index in range(len(signal)):
-      result[index] = -1*sig[index]
-
-      if (index >= 1):
-        result[index] -= result[index-1]
-
-      if (index >= 16):
-        result[index] += 32*sig[index-16]
-
-      if (index >= 32):
-        result[index] += sig[index-32]
-
-    # Normalize the result from the high pass filter
-    max_val = max(max(result),-min(result))
-    result = result/max_val
-
-    return result
-
-  def derivative(self,signal):
-    # Initialize result
-    result = signal.copy()
-
-    # Apply the derivative filter using the equation given
-    for index in range(len(signal)):
-      result[index] = 0
-
-      if (index >= 1):
-        result[index] -= 2*signal[index-1]
-
-      if (index >= 2):
-        result[index] -= signal[index-2]
-
-      if (index >= 2 and index <= len(signal)-2):
-        result[index] += 2*signal[index+1]
-
-      if (index >= 2 and index <= len(signal)-3):
-        result[index] += signal[index+2]
-
-      result[index] = (result[index]*SAMPLING_RATE)/8
-
-    return result
-
-  def squaring(self,signal):
-    # Initialize result
-    result = signal.copy()
-
-    # Apply the squaring using the equation given
-    for index in range(len(signal)):
-      result[index] = signal[index]**2
-
-    return result    
-
-  def moving_window_integration(self,signal):
-    # Initialize result and window size for integration
-    result = signal.copy()
-    win_size = round(0.150 * SAMPLING_RATE)
-    sum = 0
-
-    # Calculate the sum for the first N terms
-    for j in range(win_size):
-      sum += signal[j]/win_size
-      result[j] = sum
-    
-    # Apply the moving window integration using the equation given
-    for index in range(win_size,len(signal)):  
-      sum += signal[index]/win_size
-      sum -= signal[index-win_size]/win_size
-      result[index] = sum
-
-    return result
-
-  def solve(self,signal):
-    # Convert the input signal into numpy array
-    input_signal = signal.iloc[:,1].to_numpy()
-
-    # Bandpass Filter
-    global bpass
-    bpass = self.band_pass_filter(input_signal.copy())
-
-    # Derivative Function
-    global der
-    der = self.derivative(bpass.copy())
-
-    # Squaring Function
-    global sqr
-    sqr = self.squaring(der.copy())
-
-    # Moving Window Integration Function
-    global mwin
-    mwin = self.moving_window_integration(sqr.copy())
-
-    return mwin
-
-QRS_detector = Pan_Tompkins_QRS()
+# Execution
+QRS_detector = Pan_Tompkins_QRS(SAMPLING_RATE)
 ecg = pd.read_csv('ecg_samples.csv')
-output_singal = QRS_detector.solve(ecg)
-# join the time with the ouput signal in two columns
-final_signal = pd.DataFrame({'time_s': ecg.iloc[:,0], 'ecg': output_singal})
+
+# Process signal
+mwin_signal, r_peaks = QRS_detector.solve(ecg)
+
+# Heart Rate Calculation: Average of last 5-7 beats 
+if len(r_peaks) > 1:
+    rr_intervals = np.diff(r_peaks) / SAMPLING_RATE
+    # Calculate BPM based on recent history
+    avg_bpm = 60 / np.mean(rr_intervals[-7:])
+    print(f"Detected Heart Rate: {avg_bpm:.2f} BPM")
+
+# Save and Plot
+final_signal = pd.DataFrame({'time_s': ecg.iloc[:, 0], 'ecg_integrated': mwin_signal})
 final_signal.to_csv('output_signal.csv', index=False)
-print(final_signal.shape)
-# make the final signal numpy 
+
+# Optional: Visualize R-peaks on the original signal
 np_final_signal = final_signal.to_numpy()
 plot_signals(np_final_signal, SAMPLING_RATE, 1)
-
