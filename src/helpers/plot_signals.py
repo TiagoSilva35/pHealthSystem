@@ -13,11 +13,11 @@ CHANNELS_TO_SENSORS = {
 }
 
 
-def plot_signals(signals, sampling_rate):
+def plot_signals(signals, sampling_rate, start_idx=0):
 
     time = np.arange(signals.shape[0]) / sampling_rate
     plt.figure(figsize=(12, 6))
-    for i in range(signals.shape[1]):
+    for i in range(start_idx, signals.shape[1]):
         plt.plot(time, signals[:, i], label=f'Channel {i}')
     plt.xlabel('Time (s)')
     plt.ylabel('Signal Value')
