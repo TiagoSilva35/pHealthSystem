@@ -9,10 +9,8 @@ import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
 
-if __package__ in (None, ""):
-    sys.path.append(str(Path(__file__).resolve().parents[1]))
-
 from src.helpers.signal_processing import estimate_qrs_width_ms
+from src.algorithms.pan_thompkins import PanThompkinsQRS
 
 """PVC-focused feature extraction from ECG.
 
@@ -22,20 +20,6 @@ Glossary:
 - QRS complex: fast ventricular depolarization segment around the R-peak.
 - Prematurity index: how early a beat occurs relative to the baseline RR.
 """
-
-
-def _load_pan_tompkins_detector(sampling_rate):
-    module_path = Path(__file__).resolve().parent / "pan-thompkins" / "pan_thompkins.py"
-    if not module_path.exists():
-        raise FileNotFoundError(f"Pan-Tompkins implementation not found: {module_path}")
-
-    spec = importlib.util.spec_from_file_location("pan_thompkins_impl", module_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Unable to load Pan-Tompkins module from: {module_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.PanTompkinsQRS(fs=sampling_rate)
 
 
 def load_cleaned_ecg_csv(csv_path):
@@ -86,9 +70,9 @@ def detect_r_peaks(ecg, sampling_rate, min_peak_distance_s=0.25, prominence_fact
     is more robust than generic peak detection. The prominence_factor parameter
     is kept for API compatibility but is not used in Pan-Tompkins.
     """
-    detector = _load_pan_tompkins_detector(sampling_rate)
+    detector = PanThompkinsQRS(fs=sampling_rate)
     signal_df = pd.DataFrame({"time_s": np.arange(ecg.size) / sampling_rate, "ecg": ecg})
-    result = detector.solve(signal_df, use_preprocessing=True, min_peak_distance_s=min_peak_distance_s, refractory_s=refractory_s)
+    result = detector.solve(signal_df, use_preprocessing=True)
     return np.asarray(result.get("r_peaks", []), dtype=int)
 
 

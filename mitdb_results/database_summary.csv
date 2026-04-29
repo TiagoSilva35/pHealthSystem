@@ -1,2 +1,3 @@
-record,num_beats,num_pvcs,sampling_rate_hz,duration_s,pvc_rate_percent,annotated_beats,annotated_normal_beats,annotated_pvc_beats,annotated_other_beats,annotated_before_5min,annotated_after_5min,annotated_before_normal,annotated_after_normal,annotated_before_pvc,annotated_after_pvc,error
-208,2864,608,360,1805.5527777777777,21.22905027932961,2955,1586,992,377,518,2437,278,1308,168,824,
+record,reference_beats,detected_beats,TP,FP,FN,SE_percent,PPV_percent,F1_percent,mean_abs_error_ms,median_abs_error_ms,sampling_rate_hz,duration_s
+208,2580,2938,2545,393,35,98.64341085271317,86.62355343771273,92.24356650960492,4.201047806155861,0.0,360.0,1805.5527777777777
+GLOBAL,2580,2938,2545,393,35,98.64341085271317,86.62355343771273,92.24356650960492,4.201047806155861,0.0,,1805.5527777777777
