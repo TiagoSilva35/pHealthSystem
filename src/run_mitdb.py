@@ -302,6 +302,7 @@ def evaluate_record(
     qrs_width_threshold_ms,
     tolerance_ms,
     evaluation_mode,
+    detection_rule="and",
     pvc_eval_ref=False,   # new flag: if True, evaluate PVC on all reference beats
 ):
     times, signal, sampling_rate = load_physiobank_record(record_path)
@@ -319,6 +320,7 @@ def evaluate_record(
         prematurity_threshold=prematurity_threshold,
         qrs_width_threshold_ms=qrs_width_threshold_ms,
         refractory_s=refractory_s,
+        detection_rule=detection_rule,
     )
 
     detected_peak_times_s = np.asarray([row["peak_time_s"] for row in features], dtype=float)
@@ -373,6 +375,7 @@ def batch_process_database(
     qrs_width_threshold_ms=95.0,
     tolerance_ms=50.0,
     evaluation_mode="beats",
+    detection_rule="and",
     pvc_eval_ref=False,
 ):
     output_dir = Path(output_dir)
@@ -383,7 +386,7 @@ def batch_process_database(
     print(f"[INFO] Evaluation mode: {evaluation_mode}", end="")
     if evaluation_mode == "pvc":
         print(f" ({'reference‑based' if pvc_eval_ref else 'matched‑beats'})", end="")
-    print()
+    print(f" | Detection rule: {detection_rule}")
 
     summaries = []
     for record_name in records:
@@ -398,6 +401,7 @@ def batch_process_database(
                 qrs_width_threshold_ms=qrs_width_threshold_ms,
                 tolerance_ms=tolerance_ms,
                 evaluation_mode=evaluation_mode,
+                detection_rule=detection_rule,
                 pvc_eval_ref=pvc_eval_ref,
             )
             summaries.append(summary)
@@ -484,6 +488,8 @@ def parse_args():
                         help="Evaluation mode: 'beats' (QRS detection) or 'pvc' (PVC detection)")
     parser.add_argument("--pvc-eval-ref", action="store_true",
                         help="If set, evaluate PVC rule directly on reference beats (ignoring detector). Only used when --evaluation-mode=pvc")
+    parser.add_argument("--detection-rule", choices=["and", "or", "weighted"], default="and",
+                        help="PVC detection rule: 'and' (strict: both premature AND wide), 'or' (loose: either), 'weighted' (probabilistic)")
     return parser.parse_args()
 
 def main():
@@ -499,6 +505,7 @@ def main():
         qrs_width_threshold_ms=args.qrs_width_threshold_ms,
         tolerance_ms=args.tolerance_ms,
         evaluation_mode=args.evaluation_mode,
+        detection_rule=args.detection_rule,
         pvc_eval_ref=args.pvc_eval_ref,
     )
 

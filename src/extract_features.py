@@ -113,6 +113,53 @@ def compute_local_shape_features(ecg, peak_idx, sampling_rate, window_s=0.06):
     return peak_to_peak, qrs_area, max_slope
 
 
+def compute_pvc_rule(
+    prematurity_index,
+    qrs_width_ms,
+    prematurity_threshold=0.80,
+    qrs_width_threshold_ms=130.0,
+    detection_rule="and",
+):
+    """Apply PVC detection rule and return (candidate_flag, score).
+    
+    Supported rules:
+      - "and": beat is BOTH premature AND wide (strict, original logic)
+      - "or":  beat is premature OR wide (looser, catches more)
+      - "weighted": probabilistic scoring (0.0 to 1.0)
+    """
+    cond_premature = np.isfinite(prematurity_index) and prematurity_index < prematurity_threshold
+    cond_wide = np.isfinite(qrs_width_ms) and qrs_width_ms > qrs_width_threshold_ms
+    
+    if detection_rule == "and":
+        # Strict: must match both conditions
+        candidate = bool(cond_premature and cond_wide)
+        # Score ranges 0-1: 0 if neither, 0.5 if one, 1 if both
+        score = float((cond_premature + cond_wide) / 2.0)
+    elif detection_rule == "or":
+        # Loose: match either condition
+        candidate = bool(cond_premature or cond_wide)
+        score = float((cond_premature + cond_wide) / 2.0)
+    elif detection_rule == "weighted":
+        # Probabilistic: blend prematurity and QRS width evidence
+        prem_score = 0.0
+        qrs_score = 0.0
+        
+        if np.isfinite(prematurity_index):
+            # Closer to threshold = higher score
+            prem_score = max(0.0, min(1.0, 1.0 - (prematurity_index / prematurity_threshold)))
+        
+        if np.isfinite(qrs_width_ms):
+            # Wider = higher score
+            qrs_score = min(1.0, max(0.0, (qrs_width_ms - prematurity_threshold) / 50.0))
+        
+        score = 0.6 * prem_score + 0.4 * qrs_score  # Prematurity weighted more heavily
+        candidate = score > 0.5
+    else:
+        raise ValueError(f"Unknown detection_rule: {detection_rule}")
+    
+    return int(candidate), score
+
+
 def extract_extrasystole_features(
     times,
     ecg_cleaned,
@@ -122,12 +169,16 @@ def extract_extrasystole_features(
     prematurity_threshold=0.80,
     qrs_width_threshold_ms=130.0,
     refractory_s=0.30,
+    detection_rule="and",
 ):
     """Build per-beat PVC-focused features and a simple candidate flag.
 
     Candidate rule uses two signals together:
     1) beat is early (premature),
     2) QRS is wide.
+    
+    Parameters:
+      - detection_rule: "and" (both conditions), "or" (either), "weighted" (probabilistic)
     """
     peaks = detect_r_peaks(
         ecg_cleaned,
@@ -160,10 +211,14 @@ def extract_extrasystole_features(
         prematurity_index = rr_p / rr_baseline if np.isfinite(rr_p) and rr_baseline > 0 else np.nan
         qrs_width_ms = estimate_qrs_width_ms(ecg_cleaned, int(peak), sampling_rate)
 
-        # Simple candidate rule combining the two PVC-oriented signals.
-        cond_premature = np.isfinite(prematurity_index) and prematurity_index < prematurity_threshold
-        cond_wide = np.isfinite(qrs_width_ms) and qrs_width_ms > qrs_width_threshold_ms
-        is_extrasystole_candidate = bool(cond_premature and cond_wide)
+        # Apply PVC detection rule
+        is_candidate, pvc_score = compute_pvc_rule(
+            prematurity_index,
+            qrs_width_ms,
+            prematurity_threshold=prematurity_threshold,
+            qrs_width_threshold_ms=qrs_width_threshold_ms,
+            detection_rule=detection_rule,
+        )
 
         features.append(
             {
@@ -174,7 +229,8 @@ def extract_extrasystole_features(
                 "rr_baseline_s": rr_baseline,
                 "prematurity_index": prematurity_index,
                 "qrs_width_ms": qrs_width_ms,
-                "is_pvc_candidate": int(is_extrasystole_candidate),
+                "pvc_score": pvc_score,
+                "is_pvc_candidate": is_candidate,
             }
         )
 
@@ -191,6 +247,7 @@ def save_features_csv(features, output_csv):
         "rr_baseline_s",
         "prematurity_index",
         "qrs_width_ms",
+        "pvc_score",
         "is_pvc_candidate",
     ]
 
@@ -270,6 +327,8 @@ def parse_args():
     parser.add_argument("--prematurity-threshold", type=float, default=0.80, help="Prematurity index threshold")
     parser.add_argument("--qrs-width-threshold-ms", type=float, default=110.0, help="Wide QRS threshold in ms")
     parser.add_argument("--refractory", type=float, default=0.3, help="Refractory period after an accepted QRS in seconds")
+    parser.add_argument("--detection-rule", choices=["and", "or", "weighted"], default="and",
+                        help="PVC detection rule: 'and' (both premature AND wide, strict), 'or' (either premature OR wide, loose), 'weighted' (probabilistic)")
     return parser.parse_args()
 
 
@@ -287,6 +346,7 @@ def main():
         prematurity_threshold=args.prematurity_threshold,
         qrs_width_threshold_ms=args.qrs_width_threshold_ms,
         refractory_s=args.refractory,
+        detection_rule=args.detection_rule,
     )
 
     save_features_csv(features, args.output)
@@ -294,6 +354,7 @@ def main():
 
     n_candidates = int(sum(row["is_pvc_candidate"] for row in features))
     print(f"[INFO] Sampling rate inferred: {sampling_rate:.2f} Hz")
+    print(f"[INFO] Detection rule: {args.detection_rule}")
     print(f"[INFO] Detected beats: {len(features)}")
     print(f"[INFO] PVC candidates: {n_candidates}")
     print(f"[INFO] Saved feature table to {args.output}")
