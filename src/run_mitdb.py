@@ -1,138 +1,319 @@
 #!/usr/bin/env python3
 """
-Evaluate beat (R-peak) detection on the MIT-BIH Arrhythmia Database.
+MIT-BIH beat / PVC detection evaluation.
 
-Example:
-    python src/run_mitdb.py \
-        --database mitdb \
-        --output mitdb_results \
-        --sample-record 208 \
-        --tolerance-ms 50
+Examples:
+  # Beat detection performance (default)
+  python src/run_mitdb.py --database mitdb
+
+  # PVC detection performance (matched beats)
+  python src/run_mitdb.py --database mitdb --evaluation-mode pvc
+
+  # PVC detection performance on all reference beats (ignoring detector)
+  python src/run_mitdb.py --database mitdb --evaluation-mode pvc --pvc-eval-ref
 """
 
 import argparse
 import csv
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from src.extract_features import extract_extrasystole_features, save_peak_time_plot
-from src.helpers.signal_processing import preprocess_ecg_for_arrhythmia
 import wfdb
 
+from src.extract_features import extract_extrasystole_features, save_peak_time_plot
+from src.helpers.signal_processing import (
+    estimate_qrs_width_ms,
+    preprocess_ecg_for_arrhythmia,
+)
+
+# ----------------------------------------------------------------------
+# Constants
+# ----------------------------------------------------------------------
 NON_BEAT_ANNOTATION_SYMBOLS = {
     "+", "~", "|", "[", "]", "x", "(", ")", "!", "p", "t", "u",
-    "`", "'", "^", "=", "s", "T", "*", "@", "J", "a", "S", "e", "j", "F"
+    "`", "'", "^", "=", "s", "T", "*", "@", "J", "a", "S", "e", "j", "F",
 }
+PVC_ANNOTATION_SYMBOLS = {"V"}
 
-
+# ----------------------------------------------------------------------
+# Database I/O (unchanged)
+# ----------------------------------------------------------------------
 def list_records(db_path: Path):
-    """Return all WFDB record basenames found in a directory."""
     return sorted(p.stem for p in db_path.glob("*.hea"))
 
-
 def load_physiobank_record(record_path: Path):
-    """
-    Load a WFDB record and return:
-        times (seconds), signal (1D numpy array), sampling_rate
-    """
     record = wfdb.rdrecord(str(record_path))
     if record.p_signal is None:
         raise ValueError(f"{record_path} has no physical signal (p_signal).")
-
-    signal = record.p_signal[:, 0]  # lead I / channel 0
+    signal = record.p_signal[:, 0]
     sampling_rate = float(record.fs)
     times = np.arange(len(signal), dtype=float) / sampling_rate
-
-
     return times, signal, sampling_rate
 
-
 def load_reference_beats(record_path: Path):
-    """
-    Load beat annotations from the MIT-BIH atr file.
-
-    Returns:
-        ref_samples: np.ndarray[int]
-        ref_symbols: list[str]
-    """
     ann = wfdb.rdann(str(record_path), "atr")
-
-    ref_samples = []
-    ref_symbols = []
-
+    ref_samples, ref_symbols, pvc_labels = [], [], []
     for sample, symbol in zip(ann.sample, ann.symbol):
         if symbol in NON_BEAT_ANNOTATION_SYMBOLS:
             continue
         ref_samples.append(int(sample))
         ref_symbols.append(symbol)
-
-    return np.asarray(ref_samples, dtype=int), ref_symbols
-
+        pvc_labels.append(1 if symbol in PVC_ANNOTATION_SYMBOLS else 0)
+    return np.asarray(ref_samples, dtype=int), ref_symbols, np.asarray(pvc_labels, dtype=int)
 
 def match_detections_to_references(ref_samples, det_samples, tol_samples):
-    """
-    Greedy one-to-one matching between detected peaks and reference beats.
-
-    A detection matches the closest unmatched reference beat within tolerance.
-
-    Returns:
-        tp, fp, fn, signed_errors_samples
-    """
+    """Greedy matching, returns tp, fp, fn, signed_errors, matched_ref_idx (index or -1)."""
     ref_samples = np.asarray(ref_samples, dtype=int)
     det_samples = np.asarray(det_samples, dtype=int)
-
     if len(ref_samples) == 0:
-        return 0, int(len(det_samples)), 0, np.asarray([], dtype=float)
+        return 0, len(det_samples), 0, np.array([], dtype=float), np.full(len(det_samples), -1)
 
     used_ref = np.zeros(len(ref_samples), dtype=bool)
     signed_errors = []
-
-    tp = 0
-    fp = 0
+    matched_ref_idx = []
+    tp = fp = 0
 
     for det in det_samples:
         distances = np.abs(ref_samples - det)
         nearest_idx = int(np.argmin(distances))
         nearest_error = int(det - ref_samples[nearest_idx])
-
         if distances[nearest_idx] <= tol_samples and not used_ref[nearest_idx]:
             used_ref[nearest_idx] = True
             tp += 1
             signed_errors.append(nearest_error)
+            matched_ref_idx.append(nearest_idx)
         else:
             fp += 1
+            matched_ref_idx.append(-1)
 
     fn = int(np.sum(~used_ref))
-    return tp, fp, fn, np.asarray(signed_errors, dtype=float)
+    return tp, fp, fn, np.asarray(signed_errors, dtype=float), np.array(matched_ref_idx, dtype=int)
 
-
-def evaluate_record(
-    record_path: Path,
-    min_peak_distance_s=0.06,
-    refractory_s=0.12,
-    prematurity_threshold=0.95,
-    qrs_width_threshold_ms=95.0,
-    tolerance_ms=50.0,
+# ----------------------------------------------------------------------
+# Per‑record metric helpers
+# ----------------------------------------------------------------------
+def compute_beat_detection_metrics(
+    record_name,
+    tp_beats, fp_beats, fn_beats,
+    ref_count, det_count,
+    sampling_rate,
+    duration_s,
 ):
-    """
-    Detect beats, compare them against the reference annotations, and return
-    a summary dict plus the feature rows.
-    """
+    """Return summary dict for QRS detection."""
+    se = 100.0 * tp_beats / (tp_beats + fn_beats) if (tp_beats + fn_beats) > 0 else 0.0
+    ppv = 100.0 * tp_beats / (tp_beats + fp_beats) if (tp_beats + fp_beats) > 0 else 0.0
+    f1 = 2.0 * tp_beats / (2 * tp_beats + fp_beats + fn_beats) * 100.0 if (2 * tp_beats + fp_beats + fn_beats) > 0 else 0.0
+
+    return {
+        "record": record_name,
+        "reference_beats": ref_count,
+        "detected_beats": det_count,
+        "TP": tp_beats,
+        "FP": fp_beats,
+        "FN": fn_beats,
+        "SE_percent": se,
+        "PPV_percent": ppv,
+        "F1_percent": f1,
+        "sampling_rate_hz": sampling_rate,
+        "duration_s": duration_s,
+    }
+
+def compute_pvc_detection_metrics_matched(
+    record_name,
+    is_pvc_pred,          # array of 0/1 for all detections
+    matched_ref_idx,      # index to ref_samples or -1
+    pvc_labels,           # true PVC labels of all reference beats
+    ref_count,
+    sampling_rate,
+    duration_s,
+):
+    """Evaluate PVC classification only on correctly detected beats (matched)."""
+    matched_mask = matched_ref_idx != -1
+    pred_matched = is_pvc_pred[matched_mask]
+    true_matched = pvc_labels[matched_ref_idx[matched_mask]]
+
+    tp = int(np.sum((pred_matched == 1) & (true_matched == 1)))
+    fp = int(np.sum((pred_matched == 1) & (true_matched == 0)))
+    fn = int(np.sum((pred_matched == 0) & (true_matched == 1)))
+    tn = int(np.sum((pred_matched == 0) & (true_matched == 0)))
+
+    sens = 100.0 * tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    spec = 100.0 * tn / (tn + fp) if (tn + fp) > 0 else 0.0
+    acc  = 100.0 * (tp + tn) / (tp + fp + fn + tn) if (tp + fp + fn + tn) > 0 else 0.0
+    ppv  = 100.0 * tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    f1   = 2.0 * tp / (2 * tp + fp + fn) * 100.0 if (2 * tp + fp + fn) > 0 else 0.0
+
+    return {
+        "record": record_name,
+        "reference_pvc_beats": int(np.sum(pvc_labels)),
+        "detected_pvc_candidates": int(np.sum(is_pvc_pred)),
+        "TP_pvc": tp,
+        "FP_pvc": fp,
+        "FN_pvc": fn,
+        "TN_pvc": tn,
+        "Sensitivity_pvc_percent": sens,
+        "Specificity_pvc_percent": spec,
+        "Accuracy_pvc_percent": acc,
+        "PPV_pvc_percent": ppv,
+        "F1_pvc_percent": f1,
+        "sampling_rate_hz": sampling_rate,
+        "duration_s": duration_s,
+    }
+
+def compute_pvc_detection_metrics_reference(
+    record_name,
+    clean_signal,
+    times,
+    ref_samples,
+    pvc_labels,
+    prematurity_threshold,
+    qrs_width_threshold_ms,
+    sampling_rate,
+    duration_s,
+):
+    """Evaluate PVC rule directly on all reference beats (ignores the QRS detector)."""
+    peak_times = times[ref_samples]
+    rr = np.diff(peak_times)
+    rr_median = np.median(rr) if len(rr) > 0 else np.nan
+
+    tp = fp = fn = tn = 0
+    for i, sample in enumerate(ref_samples):
+        # Prematurity index
+        if i > 0 and np.isfinite(rr[i-1]) and rr_median > 0:
+            prem_index = rr[i-1] / rr_median
+        else:
+            prem_index = np.nan
+
+        # QRS width
+        qrs_width = estimate_qrs_width_ms(clean_signal, int(sample), sampling_rate)
+
+        # Rule
+        cond_prem = np.isfinite(prem_index) and prem_index < prematurity_threshold
+        cond_wide = np.isfinite(qrs_width) and qrs_width > qrs_width_threshold_ms
+        pred = 1 if cond_prem and cond_wide else 0
+
+        true = pvc_labels[i]
+        if true == 1 and pred == 1: tp += 1
+        elif true == 0 and pred == 1: fp += 1
+        elif true == 1 and pred == 0: fn += 1
+        else: tn += 1
+
+    sens = 100.0 * tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    spec = 100.0 * tn / (tn + fp) if (tn + fp) > 0 else 0.0
+    acc  = 100.0 * (tp + tn) / (tp + fp + fn + tn) if (tp + fp + fn + tn) > 0 else 0.0
+    ppv  = 100.0 * tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    f1   = 2.0 * tp / (2 * tp + fp + fn) * 100.0 if (2 * tp + fp + fn) > 0 else 0.0
+
+    return {
+        "record": record_name,
+        "reference_pvc_beats": int(np.sum(pvc_labels)),
+        "detected_pvc_candidates": tp + fp,  # number of reference beats classified as PVC
+        "TP_pvc": tp,
+        "FP_pvc": fp,
+        "FN_pvc": fn,
+        "TN_pvc": tn,
+        "Sensitivity_pvc_percent": sens,
+        "Specificity_pvc_percent": spec,
+        "Accuracy_pvc_percent": acc,
+        "PPV_pvc_percent": ppv,
+        "F1_pvc_percent": f1,
+        "sampling_rate_hz": sampling_rate,
+        "duration_s": duration_s,
+    }
+
+# ----------------------------------------------------------------------
+# Global aggregation helpers
+# ----------------------------------------------------------------------
+def aggregate_beat_metrics(summaries):
+    """Given list of beat‑detection summary dicts, add a GLOBAL row and return DataFrame."""
+    df = pd.DataFrame(summaries)
+    ok = df.dropna(subset=["reference_beats", "detected_beats", "TP", "FP", "FN"]).copy()
+    if ok.empty:
+        return df
+    total_ref = int(ok["reference_beats"].sum())
+    total_det = int(ok["detected_beats"].sum())
+    total_tp  = int(ok["TP"].sum())
+    total_fp  = int(ok["FP"].sum())
+    total_fn  = int(ok["FN"].sum())
+
+    global_se  = 100.0 * total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+    global_ppv = 100.0 * total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+    global_f1  = 2.0 * total_tp / (2 * total_tp + total_fp + total_fn) * 100.0 if (2 * total_tp + total_fp + total_fn) > 0 else 0.0
+
+    global_row = {
+        "record": "GLOBAL",
+        "reference_beats": total_ref,
+        "detected_beats": total_det,
+        "TP": total_tp,
+        "FP": total_fp,
+        "FN": total_fn,
+        "SE_percent": global_se,
+        "PPV_percent": global_ppv,
+        "F1_percent": global_f1,
+        "sampling_rate_hz": "",
+        "duration_s": float(ok["duration_s"].sum()),
+    }
+    return pd.concat([df, pd.DataFrame([global_row])], ignore_index=True)
+
+def aggregate_pvc_metrics(summaries):
+    """Given list of PVC‑detection summary dicts, add a GLOBAL row and return DataFrame."""
+    df = pd.DataFrame(summaries)
+    ok = df.dropna(subset=["TP_pvc", "FP_pvc", "FN_pvc", "TN_pvc"]).copy()
+    if ok.empty:
+        return df
+    total_tp = int(ok["TP_pvc"].sum())
+    total_fp = int(ok["FP_pvc"].sum())
+    total_fn = int(ok["FN_pvc"].sum())
+    total_tn = int(ok["TN_pvc"].sum())
+
+    global_sens = 100.0 * total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+    global_spec = 100.0 * total_tn / (total_tn + total_fp) if (total_tn + total_fp) > 0 else 0.0
+    global_acc  = 100.0 * (total_tp + total_tn) / (total_tp + total_fp + total_fn + total_tn) if (total_tp + total_fp + total_fn + total_tn) > 0 else 0.0
+    global_ppv  = 100.0 * total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+    global_f1   = 2.0 * total_tp / (2 * total_tp + total_fp + total_fn) * 100.0 if (2 * total_tp + total_fp + total_fn) > 0 else 0.0
+
+    global_row = {
+        "record": "GLOBAL",
+        "reference_pvc_beats": int(ok["reference_pvc_beats"].sum()),
+        "detected_pvc_candidates": int(ok["detected_pvc_candidates"].sum()),
+        "TP_pvc": total_tp,
+        "FP_pvc": total_fp,
+        "FN_pvc": total_fn,
+        "TN_pvc": total_tn,
+        "Sensitivity_pvc_percent": global_sens,
+        "Specificity_pvc_percent": global_spec,
+        "Accuracy_pvc_percent": global_acc,
+        "PPV_pvc_percent": global_ppv,
+        "F1_pvc_percent": global_f1,
+        "sampling_rate_hz": "",
+        "duration_s": float(ok["duration_s"].sum()),
+    }
+    return pd.concat([df, pd.DataFrame([global_row])], ignore_index=True)
+
+# ----------------------------------------------------------------------
+# Main record evaluation (dispatches to helpers)
+# ----------------------------------------------------------------------
+def evaluate_record(
+    record_path,
+    min_peak_distance_s,
+    refractory_s,
+    prematurity_threshold,
+    qrs_width_threshold_ms,
+    tolerance_ms,
+    evaluation_mode,
+    pvc_eval_ref=False,   # new flag: if True, evaluate PVC on all reference beats
+):
     times, signal, sampling_rate = load_physiobank_record(record_path)
+    preprocessed = preprocess_ecg_for_arrhythmia(signal, sampling_rate, notch_hz=60.0)
+    clean_signal = preprocessed["cleaned"]
 
-    preprocessed = preprocess_ecg_for_arrhythmia(
-        signal,
-        sampling_rate,
-        notch_hz=60.0,  
-    )
-    signal = preprocessed["cleaned"]
-    ref_samples, ref_symbols = load_reference_beats(record_path)
+    ref_samples, ref_symbols, pvc_labels = load_reference_beats(record_path)
 
+    # Run the detector and extract features (always needed for beat detection;
+    # for PVC‑reference mode we could skip the detector, but we keep it for consistency)
     features = extract_extrasystole_features(
-        times,
-        signal,
+        times, clean_signal,
         sampling_rate=sampling_rate,
         min_peak_distance_s=min_peak_distance_s,
         prematurity_threshold=prematurity_threshold,
@@ -142,49 +323,44 @@ def evaluate_record(
 
     detected_peak_times_s = np.asarray([row["peak_time_s"] for row in features], dtype=float)
     detected_samples = np.asarray(np.round(detected_peak_times_s * sampling_rate), dtype=int)
+    is_pvc_pred = np.asarray([row["is_pvc_candidate"] for row in features], dtype=int)
 
     tol_samples = int(round((tolerance_ms / 1000.0) * sampling_rate))
-    tp, fp, fn, signed_errors = match_detections_to_references(
+    tp_beats, fp_beats, fn_beats, signed_errors, matched_ref_idx = match_detections_to_references(
         ref_samples, detected_samples, tol_samples
     )
 
-    reference_beats = int(len(ref_samples))
-    detected_beats = int(len(detected_samples))
+    duration_s = float(times[-1]) if len(times) else 0.0
 
-    sensitivity = 100.0 * tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    ppv = 100.0 * tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    f1 = 2.0 * tp / (2 * tp + fp + fn) * 100.0 if (2 * tp + fp + fn) > 0 else 0.0
+    if evaluation_mode == "beats":
+        summary = compute_beat_detection_metrics(
+            record_path.name,
+            tp_beats, fp_beats, fn_beats,
+            len(ref_samples), len(detected_samples),
+            sampling_rate, duration_s,
+        )
+    else:  # pvc mode
+        if pvc_eval_ref:
+            # Use reference beats directly (ignore detector)
+            summary = compute_pvc_detection_metrics_reference(
+                record_path.name,
+                clean_signal, times,
+                ref_samples, pvc_labels,
+                prematurity_threshold, qrs_width_threshold_ms,
+                sampling_rate, duration_s,
+            )
+        else:
+            # Use matched beats only
+            summary = compute_pvc_detection_metrics_matched(
+                record_path.name,
+                is_pvc_pred, matched_ref_idx, pvc_labels,
+                len(ref_samples), sampling_rate, duration_s,
+            )
+    return summary, features, times, clean_signal
 
-    mean_abs_error_ms = (
-        float(np.mean(np.abs(signed_errors)) * 1000.0 / sampling_rate)
-        if len(signed_errors) > 0
-        else np.nan
-    )
-    median_abs_error_ms = (
-        float(np.median(np.abs(signed_errors)) * 1000.0 / sampling_rate)
-        if len(signed_errors) > 0
-        else np.nan
-    )
-
-    summary = {
-        "record": record_path.name,
-        "reference_beats": reference_beats,
-        "detected_beats": detected_beats,
-        "TP": tp,
-        "FP": fp,
-        "FN": fn,
-        "SE_percent": sensitivity,
-        "PPV_percent": ppv,
-        "F1_percent": f1,
-        "mean_abs_error_ms": mean_abs_error_ms,
-        "median_abs_error_ms": median_abs_error_ms,
-        "sampling_rate_hz": sampling_rate,
-        "duration_s": float(times[-1]) if len(times) else 0.0,
-    }
-
-    return summary, features, times, signal
-
-
+# ----------------------------------------------------------------------
+# Batch processing (now thin)
+# ----------------------------------------------------------------------
 def batch_process_database(
     database_path,
     output_dir,
@@ -196,28 +372,24 @@ def batch_process_database(
     prematurity_threshold=0.95,
     qrs_width_threshold_ms=95.0,
     tolerance_ms=50.0,
+    evaluation_mode="beats",
+    pvc_eval_ref=False,
 ):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
     db_path = Path(database_path)
     records = list_records(db_path)
-
-    if not records:
-        raise FileNotFoundError(
-            f"No .hea records found in {db_path}. Make sure this is a WFDB database folder."
-        )
-
     print(f"[INFO] Found {len(records)} records in {database_path}")
+    print(f"[INFO] Evaluation mode: {evaluation_mode}", end="")
+    if evaluation_mode == "pvc":
+        print(f" ({'reference‑based' if pvc_eval_ref else 'matched‑beats'})", end="")
+    print()
 
     summaries = []
-
     for record_name in records:
         record_path = db_path / record_name
-
         try:
             print(f"[PROC] {record_name} ...", end=" ", flush=True)
-
             summary, features, times, signal = evaluate_record(
                 record_path,
                 min_peak_distance_s=min_peak_distance_s,
@@ -225,24 +397,33 @@ def batch_process_database(
                 prematurity_threshold=prematurity_threshold,
                 qrs_width_threshold_ms=qrs_width_threshold_ms,
                 tolerance_ms=tolerance_ms,
+                evaluation_mode=evaluation_mode,
+                pvc_eval_ref=pvc_eval_ref,
             )
-
             summaries.append(summary)
 
-            print(
-                f"OK | ref={summary['reference_beats']} "
-                f"det={summary['detected_beats']} "
-                f"TP={summary['TP']} FP={summary['FP']} FN={summary['FN']} "
-                f"SE={summary['SE_percent']:.2f}% PPV={summary['PPV_percent']:.2f}%"
-            )
+            # Print a brief status
+            if evaluation_mode == "beats":
+                print(f"OK | ref={summary['reference_beats']} det={summary['detected_beats']} "
+                      f"TP={summary['TP']} FP={summary['FP']} FN={summary['FN']} "
+                      f"SE={summary['SE_percent']:.2f}% PPV={summary['PPV_percent']:.2f}%")
+            else:
+                print(f"OK | refPVC={summary['reference_pvc_beats']} cand={summary['detected_pvc_candidates']} "
+                      f"TP={summary['TP_pvc']} FP={summary['FP_pvc']} FN={summary['FN_pvc']} TN={summary['TN_pvc']} "
+                      f"Sens={summary['Sensitivity_pvc_percent']:.2f}% "
+                      f"Spec={summary['Specificity_pvc_percent']:.2f}% "
+                      f"Acc={summary['Accuracy_pvc_percent']:.2f}%")
 
-            output_csv = output_dir / f"{record_name}_beat_eval.csv"
-            with open(output_csv, "w", newline="", encoding="utf-8") as f:
+            # Save per‑record summary
+            prefix = "beat" if evaluation_mode == "beats" else "pvc"
+            suffix = "_ref" if (evaluation_mode == "pvc" and pvc_eval_ref) else ""
+            csv_path = output_dir / f"{record_name}_{prefix}_eval{suffix}.csv"
+            with open(csv_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=list(summary.keys()))
                 writer.writeheader()
                 writer.writerow(summary)
 
-            # Save detected beat feature rows too, if you want to inspect them later.
+            # Save full feature table
             features_csv = output_dir / f"{record_name}_detected_beats.csv"
             if features:
                 feat_df = pd.DataFrame(features)
@@ -254,124 +435,61 @@ def batch_process_database(
 
         except Exception as e:
             print(f"ERROR: {e}")
-            summaries.append(
-                {
-                    "record": record_name,
-                    "reference_beats": None,
-                    "detected_beats": None,
-                    "TP": None,
-                    "FP": None,
-                    "FN": None,
-                    "SE_percent": None,
-                    "PPV_percent": None,
-                    "F1_percent": None,
-                    "mean_abs_error_ms": None,
-                    "median_abs_error_ms": None,
-                    "sampling_rate_hz": None,
-                    "duration_s": None,
-                    "error": str(e),
-                }
-            )
+            summaries.append({"record": record_name, "error": str(e)})
 
-    summary_df = pd.DataFrame(summaries)
+    # Global aggregation
+    if summaries:
+        if evaluation_mode == "beats":
+            summary_df = aggregate_beat_metrics(summaries)
+        else:
+            summary_df = aggregate_pvc_metrics(summaries)
+    else:
+        summary_df = pd.DataFrame()
 
-    # Add global totals
-    ok_df = summary_df.dropna(subset=["reference_beats", "detected_beats", "TP", "FP", "FN"]).copy()
-    if not ok_df.empty:
-        total_ref = int(ok_df["reference_beats"].sum())
-        total_det = int(ok_df["detected_beats"].sum())
-        total_tp = int(ok_df["TP"].sum())
-        total_fp = int(ok_df["FP"].sum())
-        total_fn = int(ok_df["FN"].sum())
-
-        global_se = 100.0 * total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
-        global_ppv = 100.0 * total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
-        global_f1 = 2.0 * total_tp / (2 * total_tp + total_fp + total_fn) * 100.0 if (2 * total_tp + total_fp + total_fn) > 0 else 0.0
-
-        global_row = {
-            "record": "GLOBAL",
-            "reference_beats": total_ref,
-            "detected_beats": total_det,
-            "TP": total_tp,
-            "FP": total_fp,
-            "FN": total_fn,
-            "SE_percent": global_se,
-            "PPV_percent": global_ppv,
-            "F1_percent": global_f1,
-            "mean_abs_error_ms": float(ok_df["mean_abs_error_ms"].mean()),
-            "median_abs_error_ms": float(ok_df["median_abs_error_ms"].median()),
-            "sampling_rate_hz": "",
-            "duration_s": float(ok_df["duration_s"].sum()),
-        }
-        summary_df = pd.concat([summary_df, pd.DataFrame([global_row])], ignore_index=True)
-
-    summary_csv = output_dir / "database_summary.csv"
+    # Save global CSV
+    mode_tag = f"{evaluation_mode}" if evaluation_mode == "beats" else f"pvc{'ref' if pvc_eval_ref else ''}"
+    summary_csv = output_dir / f"database_summary_{mode_tag}.csv"
     summary_df.to_csv(summary_csv, index=False)
-
     print(f"\n[INFO] Saved summary to {summary_csv}")
-    print(f"[INFO] Processed {len(records)} records")
 
-    print("\n[SUMMARY]")
-    print(summary_df[[
-        "record",
-        "reference_beats",
-        "detected_beats",
-        "TP",
-        "FP",
-        "FN",
-        "SE_percent",
-        "PPV_percent",
-        "F1_percent",
-    ]].to_string(index=False))
+    # Print concise table
+    if not summary_df.empty:
+        print("\n[SUMMARY]")
+        if evaluation_mode == "beats":
+            cols = ["record", "reference_beats", "detected_beats",
+                    "TP", "FP", "FN", "SE_percent", "PPV_percent", "F1_percent"]
+        else:
+            cols = ["record", "reference_pvc_beats", "detected_pvc_candidates",
+                    "TP_pvc", "FP_pvc", "FN_pvc", "TN_pvc",
+                    "Sensitivity_pvc_percent", "Specificity_pvc_percent",
+                    "Accuracy_pvc_percent", "PPV_pvc_percent", "F1_pvc_percent"]
+        print(summary_df[cols].to_string(index=False))
 
-
+# ----------------------------------------------------------------------
+# Argument parsing
+# ----------------------------------------------------------------------
 def parse_args():
-    parser = argparse.ArgumentParser(
-        description="MIT-BIH beat detection evaluation"
-    )
+    parser = argparse.ArgumentParser(description="MIT-BIH beat / PVC detection evaluation")
     parser.add_argument("--database", required=True, help="Path to MIT-BIH WFDB database directory")
-    parser.add_argument("--output", default="mitdb_results", help="Output directory for results")
+    parser.add_argument("--output", default="mitdb_results", help="Output directory")
     parser.add_argument("--skip-plots", action="store_true", help="Skip generating plots")
-    parser.add_argument("--sample-record", default=None, help="Record name to visualize with extra plots")
+    parser.add_argument("--sample-record", default=None, help="Record name to visualise with extra plots")
     parser.add_argument("--show", action="store_true", help="Display plots interactively")
-    parser.add_argument(
-        "--min-peak-distance",
-        type=float,
-        default=0.06,
-        help="Minimum distance between detected peaks in seconds",
-    )
-    parser.add_argument(
-        "--refractory",
-        type=float,
-        default=0.12,
-        help="Refractory period after an accepted QRS in seconds",
-    )
-    parser.add_argument(
-        "--prematurity-threshold",
-        type=float,
-        default=0.95,
-        help="Prematurity threshold used by your detector",
-    )
-    parser.add_argument(
-        "--qrs-width-threshold-ms",
-        type=float,
-        default=95.0,
-        help="QRS width threshold used by your detector",
-    )
-    parser.add_argument(
-        "--tolerance-ms",
-        type=float,
-        default=50.0,
-        help="Matching tolerance between detected and reference beats in ms",
-    )
+    parser.add_argument("--min-peak-distance", type=float, default=0.06)
+    parser.add_argument("--refractory", type=float, default=0.12)
+    parser.add_argument("--prematurity-threshold", type=float, default=0.95)
+    parser.add_argument("--qrs-width-threshold-ms", type=float, default=95.0)
+    parser.add_argument("--tolerance-ms", type=float, default=50.0)
+    parser.add_argument("--evaluation-mode", choices=["beats", "pvc"], default="beats",
+                        help="Evaluation mode: 'beats' (QRS detection) or 'pvc' (PVC detection)")
+    parser.add_argument("--pvc-eval-ref", action="store_true",
+                        help="If set, evaluate PVC rule directly on reference beats (ignoring detector). Only used when --evaluation-mode=pvc")
     return parser.parse_args()
-
 
 def main():
     args = parse_args()
     batch_process_database(
-        args.database,
-        args.output,
+        args.database, args.output,
         skip_plots=args.skip_plots,
         sample_record=args.sample_record,
         show_plots=args.show,
@@ -380,8 +498,9 @@ def main():
         prematurity_threshold=args.prematurity_threshold,
         qrs_width_threshold_ms=args.qrs_width_threshold_ms,
         tolerance_ms=args.tolerance_ms,
+        evaluation_mode=args.evaluation_mode,
+        pvc_eval_ref=args.pvc_eval_ref,
     )
-
 
 if __name__ == "__main__":
     main()

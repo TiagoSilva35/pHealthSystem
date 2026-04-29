@@ -269,7 +269,7 @@ def parse_args():
     parser.add_argument("--prominence-factor", type=float, default=1.0, help="R-peak prominence multiplier")
     parser.add_argument("--prematurity-threshold", type=float, default=0.80, help="Prematurity index threshold")
     parser.add_argument("--qrs-width-threshold-ms", type=float, default=110.0, help="Wide QRS threshold in ms")
-    parser.add_argument("--refractory", type=float, default=0.14, help="Refractory period after an accepted QRS in seconds")
+    parser.add_argument("--refractory", type=float, default=0.3, help="Refractory period after an accepted QRS in seconds")
     return parser.parse_args()
 
 
