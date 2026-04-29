@@ -135,8 +135,8 @@ def compute_pvc_detection_metrics_matched(
 
     tp = int(np.sum((pred_matched == 1) & (true_matched == 1)))
     fp = int(np.sum((pred_matched == 1) & (true_matched == 0)))
-    fn = int(np.sum((pred_matched == 0) & (true_matched == 1)))
-    tn = int(np.sum((pred_matched == 0) & (true_matched == 0)))
+    fn = int(np.sum(pvc_labels) - tp)  # total true PVCs minus those correctly predicted
+    tn = (len(pvc_labels) - int(np.sum(pvc_labels))) - fp  # total non-PVCs minus those incorrectly predicted as PVC
 
     sens = 100.0 * tp / (tp + fn) if (tp + fn) > 0 else 0.0
     spec = 100.0 * tn / (tn + fp) if (tn + fp) > 0 else 0.0
