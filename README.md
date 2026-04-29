@@ -51,6 +51,31 @@ python -m src.main
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
+## Analisar base CU Ventricular Tachyarrhythmia (1-35)
+
+O script abaixo corre duas analises na base completa:
+
+- Pan-Tompkins + prematuridade RR para candidatos PVC.
+- Sinal pos-processado + largura QRS para candidatos PVC.
+
+Tambem permite escolher uma amostra (`1-35`) para gerar os graficos com:
+
+- picos detetados e candidatos de extrasistole (Pan-Tompkins)
+- largura QRS detetada para a amostra
+
+```zsh
+python src/analyze_cu_vt_database.py \
+	--database cu-ventricular-tachyarrhythmia-database-1.0.0 \
+	--output-dir cu_analysis_results \
+	--sample 1
+```
+
+Saidas principais:
+
+- `cu_analysis_results/cu_database_summary.csv`: contagens por amostra e totais da base.
+- `cu_analysis_results/cuXX_pan_candidates.png`: grafico Pan-Tompkins da amostra selecionada.
+- `cu_analysis_results/cuXX_qrs_width.png`: grafico de largura QRS da amostra selecionada.
+
 ## Troubleshooting
 
 - Erro `bluetooth/bluetooth.h: No such file or directory`:

@@ -1,37 +1,66 @@
 import argparse
 import csv
+import importlib.util
 import sys
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from scipy.signal import find_peaks
 
 if __package__ in (None, ""):
     sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-"""Extrasystole feature extraction from cleaned ECG.
+from src.helpers.signal_processing import estimate_qrs_width_ms
+
+"""PVC-focused feature extraction from ECG.
 
 Glossary:
 - R-peak: highest (or lowest, depending on lead polarity) point of a heartbeat.
 - RR interval: time between consecutive R-peaks.
 - QRS complex: fast ventricular depolarization segment around the R-peak.
 - Prematurity index: how early a beat occurs relative to the baseline RR.
-- Compensatory pause: longer pause that can follow an ectopic beat.
 """
 
 
+def _load_pan_tompkins_detector(sampling_rate):
+    module_path = Path(__file__).resolve().parent / "pan-thompkins" / "pan_thompkins.py"
+    if not module_path.exists():
+        raise FileNotFoundError(f"Pan-Tompkins implementation not found: {module_path}")
+
+    spec = importlib.util.spec_from_file_location("pan_thompkins_impl", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load Pan-Tompkins module from: {module_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.PanTompkinsQRS(fs=sampling_rate)
+
+
 def load_cleaned_ecg_csv(csv_path):
-    """Load cleaned ECG and infer sampling rate from the time column."""
+    """Load ECG data and infer sampling rate from the time column.
+
+    The loader accepts either a cleaned signal column named ``ecg_cleaned`` or
+    a raw signal column named ``ecg`` so the extractor can be tested directly on
+    the raw acquisition CSV.
+    """
     data = np.genfromtxt(csv_path, delimiter=",", names=True)
     if data.dtype.names is None:
         raise ValueError("CSV must include headers")
 
-    required = {"time_s", "ecg_cleaned"}
-    if not required.issubset(set(data.dtype.names)):
-        raise ValueError("CSV must contain 'time_s' and 'ecg_cleaned' columns")
+    columns = set(data.dtype.names)
+    if "time_s" not in columns:
+        raise ValueError("CSV must contain a 'time_s' column")
+
+    if "ecg_cleaned" in columns:
+        signal = np.asarray(data["ecg_cleaned"], dtype=float)
+    elif "ecg" in columns:
+        signal = np.asarray(data["ecg"], dtype=float)
+    else:
+        raise ValueError("CSV must contain either 'ecg_cleaned' or 'ecg' column")
 
     times = np.asarray(data["time_s"], dtype=float)
-    cleaned = np.asarray(data["ecg_cleaned"], dtype=float)
     if times.size < 5:
         raise ValueError("CSV must contain at least 5 samples")
 
@@ -40,7 +69,7 @@ def load_cleaned_ecg_csv(csv_path):
         raise ValueError("Invalid timestamps in CSV")
 
     sampling_rate = 1.0 / dt
-    return times, cleaned, sampling_rate
+    return times, signal, sampling_rate
 
 
 def robust_std(values):
@@ -50,25 +79,17 @@ def robust_std(values):
     return 1.4826 * mad + 1e-9
 
 
-def detect_r_peaks(ecg, sampling_rate, min_peak_distance_s=0.25, prominence_factor=1.0):
-    """Detect heartbeat peaks.
+def detect_r_peaks(ecg, sampling_rate, min_peak_distance_s=0.25, prominence_factor=1.0, refractory_s=0.30):
+    """Detect heartbeat peaks using the Pan-Tompkins algorithm.
 
-    We test both positive and negative polarity because ECG lead orientation can
-    invert the waveform; the detector keeps the polarity with stronger peaks.
+    The Pan-Tompkins algorithm is specifically designed for ECG QRS detection and
+    is more robust than generic peak detection. The prominence_factor parameter
+    is kept for API compatibility but is not used in Pan-Tompkins.
     """
-    centered = ecg - np.median(ecg)
-    min_distance = max(1, int(min_peak_distance_s * sampling_rate))
-    min_prominence = prominence_factor * robust_std(centered)
-
-    pos_peaks, pos_props = find_peaks(centered, distance=min_distance, prominence=min_prominence)
-    neg_peaks, neg_props = find_peaks(-centered, distance=min_distance, prominence=min_prominence)
-
-    pos_score = float(np.mean(pos_props["prominences"])) if len(pos_peaks) else -np.inf
-    neg_score = float(np.mean(neg_props["prominences"])) if len(neg_peaks) else -np.inf
-
-    if pos_score >= neg_score:
-        return np.asarray(pos_peaks, dtype=int)
-    return np.asarray(neg_peaks, dtype=int)
+    detector = _load_pan_tompkins_detector(sampling_rate)
+    signal_df = pd.DataFrame({"time_s": np.arange(ecg.size) / sampling_rate, "ecg": ecg})
+    result = detector.solve(signal_df, use_preprocessing=True, min_peak_distance_s=min_peak_distance_s, refractory_s=refractory_s)
+    return np.asarray(result.get("r_peaks", []), dtype=int)
 
 
 def extract_beat_windows(ecg, peaks, sampling_rate, pre_s=0.20, post_s=0.40):
@@ -92,50 +113,6 @@ def extract_beat_windows(ecg, peaks, sampling_rate, pre_s=0.20, post_s=0.40):
     return np.asarray(valid_peaks, dtype=int), np.vstack(windows)
 
 
-def estimate_qrs_width_ms(ecg, peak_idx, sampling_rate, search_half_window_s=0.12):
-    """Approximate QRS width around one beat in milliseconds.
-
-    This estimates the duration of the main ventricular deflection by threshold
-    crossings on the local envelope.
-    """
-    half = int(search_half_window_s * sampling_rate)
-    start = max(0, peak_idx - half)
-    end = min(ecg.size - 1, peak_idx + half)
-    segment = ecg[start : end + 1]
-    if segment.size < 5:
-        return np.nan
-
-    edge = max(1, int(0.02 * sampling_rate))
-    baseline = np.median(np.concatenate((segment[:edge], segment[-edge:])))
-    detrended = segment - baseline
-    envelope = np.abs(detrended)
-
-    peak_env = float(np.max(envelope))
-    if peak_env <= 1e-9:
-        return np.nan
-
-    # Search the dominant deflection near the detected R peak.
-    center = peak_idx - start
-    anchor_half = max(1, int(0.02 * sampling_rate))
-    local_left = max(0, center - anchor_half)
-    local_right = min(envelope.size, center + anchor_half + 1)
-    anchor = local_left + int(np.argmax(envelope[local_left:local_right]))
-
-    thr = 0.10 * peak_env
-    left = anchor
-    right = anchor
-
-    while left > 0 and envelope[left] >= thr:
-        left -= 1
-    while right < envelope.size - 1 and envelope[right] >= thr:
-        right += 1
-
-    width_samples = right - left
-    if width_samples <= 1:
-        return np.nan
-    return 1000.0 * width_samples / sampling_rate
-
-
 def compute_local_shape_features(ecg, peak_idx, sampling_rate, window_s=0.06):
     """Compute local morphology descriptors around one beat."""
     half = int(window_s * sampling_rate)
@@ -152,15 +129,6 @@ def compute_local_shape_features(ecg, peak_idx, sampling_rate, window_s=0.06):
     return peak_to_peak, qrs_area, max_slope
 
 
-def correlation_with_template(beat_window, template):
-    """Morphology similarity between one beat and a normal-beat template."""
-    if beat_window.size != template.size:
-        return np.nan
-    if np.std(beat_window) < 1e-9 or np.std(template) < 1e-9:
-        return np.nan
-    return float(np.corrcoef(beat_window, template)[0, 1])
-
-
 def extract_extrasystole_features(
     times,
     ecg_cleaned,
@@ -168,23 +136,21 @@ def extract_extrasystole_features(
     min_peak_distance_s=0.25,
     prominence_factor=1.0,
     prematurity_threshold=0.80,
-    compensatory_threshold=1.10,
-    qrs_width_threshold_ms=110.0,
-    template_corr_threshold=0.90,
+    qrs_width_threshold_ms=130.0,
+    refractory_s=0.30,
 ):
-    """Build per-beat extrasystole features and a simple candidate flag.
+    """Build per-beat PVC-focused features and a simple candidate flag.
 
-    Candidate rule uses four signals together:
+    Candidate rule uses two signals together:
     1) beat is early (premature),
-    2) followed by pause,
-    3) QRS is wide,
-    4) morphology differs from normal template.
+    2) QRS is wide.
     """
     peaks = detect_r_peaks(
         ecg_cleaned,
         sampling_rate=sampling_rate,
         min_peak_distance_s=min_peak_distance_s,
         prominence_factor=prominence_factor,
+        refractory_s=refractory_s,
     )
 
     if peaks.size < 3:
@@ -201,63 +167,30 @@ def extract_extrasystole_features(
     # Baseline RR approximates the patient's local "normal" cycle length.
     rr_baseline = float(np.median(rr_values)) if rr_values.size else np.nan
 
-    valid_peaks, beat_windows = extract_beat_windows(ecg_cleaned, peaks, sampling_rate)
-    beat_map = {int(p): beat_windows[i] for i, p in enumerate(valid_peaks)}
-
-    # Normal template is built from beats whose RR is near baseline.
-    template = None
-    if beat_windows.shape[0] > 0:
-        normal_idxs = np.where((rr_prev >= 0.85 * rr_baseline) & (rr_prev <= 1.15 * rr_baseline))[0]
-        template_candidates = []
-        for idx in normal_idxs:
-            peak = int(peaks[idx])
-            if peak in beat_map:
-                template_candidates.append(beat_map[peak])
-        if not template_candidates:
-            template_candidates = [beat_map[int(p)] for p in valid_peaks]
-        template = np.median(np.vstack(template_candidates), axis=0)
-
     features = []
     for i, peak in enumerate(peaks):
-        peak_value = float(ecg_cleaned[peak])
         peak_time = float(times[peak])
         rr_p = float(rr_prev[i]) if np.isfinite(rr_prev[i]) else np.nan
         rr_n = float(rr_next[i]) if np.isfinite(rr_next[i]) else np.nan
 
         prematurity_index = rr_p / rr_baseline if np.isfinite(rr_p) and rr_baseline > 0 else np.nan
-        compensatory_index = rr_n / rr_baseline if np.isfinite(rr_n) and rr_baseline > 0 else np.nan
-
         qrs_width_ms = estimate_qrs_width_ms(ecg_cleaned, int(peak), sampling_rate)
-        peak_to_peak_local, qrs_area, max_slope = compute_local_shape_features(ecg_cleaned, int(peak), sampling_rate)
 
-        corr = np.nan
-        if template is not None and int(peak) in beat_map:
-            corr = correlation_with_template(beat_map[int(peak)], template)
-
+        # Simple candidate rule combining the two PVC-oriented signals.
         cond_premature = np.isfinite(prematurity_index) and prematurity_index < prematurity_threshold
-        cond_pause = np.isfinite(compensatory_index) and compensatory_index > compensatory_threshold
         cond_wide = np.isfinite(qrs_width_ms) and qrs_width_ms > qrs_width_threshold_ms
-        cond_shape = np.isnan(corr) or corr < template_corr_threshold
-
-        is_extrasystole_candidate = bool(cond_premature and cond_pause and cond_wide and cond_shape)
+        is_extrasystole_candidate = bool(cond_premature and cond_wide)
 
         features.append(
             {
                 "beat_index": i,
-                "peak_sample": int(peak),
                 "peak_time_s": peak_time,
-                "peak_value": peak_value,
                 "rr_prev_s": rr_p,
                 "rr_next_s": rr_n,
                 "rr_baseline_s": rr_baseline,
                 "prematurity_index": prematurity_index,
-                "compensatory_pause_index": compensatory_index,
                 "qrs_width_ms": qrs_width_ms,
-                "qrs_peak_to_peak": peak_to_peak_local,
-                "qrs_area_abs": qrs_area,
-                "qrs_max_slope": max_slope,
-                "template_corr": corr,
-                "is_extrasystole_candidate": int(is_extrasystole_candidate),
+                "is_pvc_candidate": int(is_extrasystole_candidate),
             }
         )
 
@@ -268,20 +201,13 @@ def save_features_csv(features, output_csv):
     """Persist extracted beat features to a CSV table."""
     fieldnames = [
         "beat_index",
-        "peak_sample",
         "peak_time_s",
-        "peak_value",
         "rr_prev_s",
         "rr_next_s",
         "rr_baseline_s",
         "prematurity_index",
-        "compensatory_pause_index",
         "qrs_width_ms",
-        "qrs_peak_to_peak",
-        "qrs_area_abs",
-        "qrs_max_slope",
-        "template_corr",
-        "is_extrasystole_candidate",
+        "is_pvc_candidate",
     ]
 
     with open(output_csv, "w", newline="", encoding="utf-8") as csvfile:
@@ -290,17 +216,76 @@ def save_features_csv(features, output_csv):
         writer.writerows(features)
 
 
+def save_peak_time_plot(times, ecg, features, output_plot=None, show_plot=False):
+    """Save an ECG plot highlighting the samples used as peak_time_s."""
+    if not features:
+        return
+
+    peak_times = np.asarray([row["peak_time_s"] for row in features], dtype=float)
+    peak_indices = np.asarray([int(np.argmin(np.abs(times - peak_time))) for peak_time in peak_times], dtype=int)
+    peak_values = ecg[peak_indices]
+    candidates = np.asarray([row["is_pvc_candidate"] for row in features], dtype=int) > 0
+
+    figure, axis = plt.subplots(figsize=(14, 5))
+    axis.plot(times, ecg, linewidth=0.9, color="#2a9d8f", label="ECG signal")
+    axis.scatter(
+        peak_times,
+        peak_values,
+        s=28,
+        color="#1f77b4",
+        label="Detected peaks",
+        zorder=3,
+    )
+
+    if np.any(candidates):
+        axis.scatter(
+            peak_times[candidates],
+            peak_values[candidates],
+            s=46,
+            color="#d62728",
+            label="PVC candidates",
+            zorder=4,
+        )
+
+    for peak_time, peak_value in zip(peak_times[candidates], peak_values[candidates]):
+        axis.axvline(peak_time, color="#d62728", alpha=0.16, linewidth=1.0)
+        axis.annotate(
+            f"{peak_time:.3f}s",
+            xy=(peak_time, peak_value),
+            xytext=(0, 8),
+            textcoords="offset points",
+            ha="center",
+            fontsize=7,
+            color="#d62728",
+        )
+
+    axis.set_title("ECG with peak_time_s markers for PVC-focused analysis")
+    axis.set_xlabel("Time (s)")
+    axis.set_ylabel("Amplitude")
+    axis.grid(True, alpha=0.3)
+    axis.legend(loc="best")
+    figure.tight_layout()
+    # If show_plot requested, display interactively instead of saving to PNG
+    if show_plot:
+        plt.show()
+    else:
+        if output_plot:
+            figure.savefig(output_plot, dpi=220, bbox_inches="tight")
+        plt.close(figure)
+
+
 def parse_args():
     """CLI options for extraction and rule thresholds."""
-    parser = argparse.ArgumentParser(description="Extract extrasystole-oriented features from cleaned ECG CSV")
+    parser = argparse.ArgumentParser(description="Extract PVC-focused features from ECG CSV")
     parser.add_argument("--input", default="ecg_samples_cleaned.csv", help="Input cleaned ECG CSV")
-    parser.add_argument("--output", default="extrasystole_features.csv", help="Output features CSV")
+    parser.add_argument("--output", default="pvc_features.csv", help="Output features CSV")
+    parser.add_argument("--plot", default="extrasystole_peak_times.png", help="Output ECG plot with peak markers")
+    parser.add_argument("--show", action="store_true", help="Display the peak-time plot interactively instead of saving a PNG")
     parser.add_argument("--min-peak-distance", type=float, default=0.25, help="Minimum R-peak spacing in seconds")
     parser.add_argument("--prominence-factor", type=float, default=1.0, help="R-peak prominence multiplier")
     parser.add_argument("--prematurity-threshold", type=float, default=0.80, help="Prematurity index threshold")
-    parser.add_argument("--compensatory-threshold", type=float, default=1.10, help="Compensatory pause threshold")
     parser.add_argument("--qrs-width-threshold-ms", type=float, default=110.0, help="Wide QRS threshold in ms")
-    parser.add_argument("--template-corr-threshold", type=float, default=0.90, help="Template correlation threshold")
+    parser.add_argument("--refractory", type=float, default=0.14, help="Refractory period after an accepted QRS in seconds")
     return parser.parse_args()
 
 
@@ -316,18 +301,22 @@ def main():
         min_peak_distance_s=args.min_peak_distance,
         prominence_factor=args.prominence_factor,
         prematurity_threshold=args.prematurity_threshold,
-        compensatory_threshold=args.compensatory_threshold,
         qrs_width_threshold_ms=args.qrs_width_threshold_ms,
-        template_corr_threshold=args.template_corr_threshold,
+        refractory_s=args.refractory,
     )
 
     save_features_csv(features, args.output)
+    save_peak_time_plot(times, ecg_cleaned, features, args.plot, show_plot=args.show)
 
-    n_candidates = int(sum(row["is_extrasystole_candidate"] for row in features))
+    n_candidates = int(sum(row["is_pvc_candidate"] for row in features))
     print(f"[INFO] Sampling rate inferred: {sampling_rate:.2f} Hz")
     print(f"[INFO] Detected beats: {len(features)}")
-    print(f"[INFO] Extrasystole candidates: {n_candidates}")
+    print(f"[INFO] PVC candidates: {n_candidates}")
     print(f"[INFO] Saved feature table to {args.output}")
+    if args.show:
+        print("[INFO] Displayed peak-time plot interactively (no PNG saved)")
+    else:
+        print(f"[INFO] Saved peak-time plot to {args.plot}")
 
 
 if __name__ == "__main__":

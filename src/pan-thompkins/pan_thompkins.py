@@ -130,11 +130,12 @@ class PanTompkinsQRS:
                 spki = float(np.max(sorted_h))
                 npki = float(np.median(sorted_h) * 0.5)
 
-        thresh_i1 = npki + 0.25 * (spki - npki)
-        thresh_i2 = 0.5 * thresh_i1
+        # Lowered initial threshold multiplier for higher sensitivity
+        thresh_i1 = npki + 0.10 * (spki - npki)
+        thresh_i2 = 0.4 * thresh_i1
         return spki, npki, thresh_i1, thresh_i2
 
-    def detect_r_peaks(self, mwin_signal, raw_signal=None, bpass_signal=None):
+    def detect_r_peaks(self, mwin_signal, raw_signal=None, bpass_signal=None, candidate_distance_s=0.12, refractory_s=0.30):
         """
         Adaptive Pan-Tompkins decision logic:
         - candidate local maxima on the energy envelope
@@ -143,8 +144,11 @@ class PanTompkinsQRS:
         - searchback if a beat is missed
         - back-search to the true R peak
         """
+        # Use a shorter candidate distance to allow denser detections (helps PVC-heavy records)
+        # Candidate distance in samples (configurable for dense PVC records)
+        candidate_distance = max(1, int(candidate_distance_s * self.fs))
         candidate_peaks, _ = signal.find_peaks(
-            mwin_signal, distance=max(1, int(0.20 * self.fs))
+            mwin_signal, distance=candidate_distance
         )
 
         if len(candidate_peaks) == 0:
@@ -157,7 +161,7 @@ class PanTompkinsQRS:
         qrs_candidates = []
         r_peaks = []
 
-        refractory = int(0.30 * self.fs)  # slide: pause ~0.3 s
+        refractory = int(refractory_s * self.fs)  # slide: pause ~0.3 s (configurable)
         t_wave_limit = int(0.36 * self.fs)
 
         last_qrs_idx = None
@@ -269,7 +273,7 @@ class PanTompkinsQRS:
     # -----------------------------
     # Main entry point
     # -----------------------------
-    def solve(self, signal_df, use_preprocessing=True):
+    def solve(self, signal_df, use_preprocessing=True, min_peak_distance_s=0.12, refractory_s=0.30):
         """
         signal_df:
             column 0 -> time in seconds
@@ -291,7 +295,9 @@ class PanTompkinsQRS:
         qrs_candidates, r_peaks, debug = self.detect_r_peaks(
             mwin_signal=mwin,
             raw_signal=raw_signal,
-            bpass_signal=bpass
+            bpass_signal=bpass,
+            candidate_distance_s=min_peak_distance_s,
+            refractory_s=refractory_s,
         )
 
         return {
@@ -308,54 +314,55 @@ class PanTompkinsQRS:
         }
 
 
-# -----------------------------
-# Example usage
-# -----------------------------
-ecg = pd.read_csv("ecg_samples.csv")
+if __name__ == "__main__":
+    # -----------------------------
+    # Example usage
+    # -----------------------------
+    ecg = pd.read_csv("ecg_samples.csv")
 
-detector = PanTompkinsQRS(fs=SAMPLING_RATE)
-result = detector.solve(ecg, use_preprocessing=True)
+    detector = PanTompkinsQRS(fs=SAMPLING_RATE)
+    result = detector.solve(ecg, use_preprocessing=True)
 
-time_s = result["time_s"]
-raw = result["raw"]
-mwin_signal = result["mwin"]
-r_peaks = result["r_peaks"]
+    time_s = result["time_s"]
+    raw = result["raw"]
+    mwin_signal = result["mwin"]
+    r_peaks = result["r_peaks"]
 
-peak_timestamps = time_s[r_peaks]
-peak_amplitudes = raw[r_peaks]
+    peak_timestamps = time_s[r_peaks]
+    peak_amplitudes = raw[r_peaks]
 
-print("\nDetection Summary:")
-print(f"Total Beats Detected: {len(r_peaks)}")
+    print("\nDetection Summary:")
+    print(f"Total Beats Detected: {len(r_peaks)}")
 
-if len(peak_timestamps) > 1:
-    rr_intervals = np.diff(peak_timestamps)
+    if len(peak_timestamps) > 1:
+        rr_intervals = np.diff(peak_timestamps)
 
-    # Slides mention average of the last 5 or 7 beats
-    n = min(7, len(rr_intervals))
-    avg_bpm = 60.0 / np.mean(rr_intervals[-n:])
-    print(f"Calculated Heart Rate: {avg_bpm:.2f} BPM")
+        # Slides mention average of the last 5 or 7 beats
+        n = min(7, len(rr_intervals))
+        avg_bpm = 60.0 / np.mean(rr_intervals[-n:])
+        print(f"Calculated Heart Rate: {avg_bpm:.2f} BPM")
 
-print("\nPeak Timestamps (s):")
-for i, t in enumerate(peak_timestamps):
-    print(f"Beat {i+1}: {t:.3f}s")
+    print("\nPeak Timestamps (s):")
+    for i, t in enumerate(peak_timestamps):
+        print(f"Beat {i+1}: {t:.3f}s")
 
-# Save the integrated signal
-final_signal = pd.DataFrame({
-    "time_s": time_s,
-    "ecg_integrated": mwin_signal
-})
-final_signal.to_csv("output_signal.csv", index=False)
+    # Save the integrated signal
+    final_signal = pd.DataFrame({
+        "time_s": time_s,
+        "ecg_integrated": mwin_signal
+    })
+    final_signal.to_csv("output_signal.csv", index=False)
 
-# Plot integrated signal
-plot_signals(final_signal.to_numpy(), SAMPLING_RATE, 1)
+    # Plot integrated signal
+    plot_signals(final_signal.to_numpy(), SAMPLING_RATE, 1)
 
-# Overlay R-peaks on raw ECG
-plt.figure(figsize=(12, 4))
-plt.plot(time_s, raw, label="Raw ECG", alpha=0.7)
-plt.scatter(peak_timestamps, peak_amplitudes, color="red", marker="x", label="R-Peaks")
-plt.title("Pan-Tompkins R-Peak Detection")
-plt.xlabel("Time (s)")
-plt.ylabel("Amplitude")
-plt.legend()
-plt.tight_layout()
-plt.show()
+    # Overlay R-peaks on raw ECG
+    plt.figure(figsize=(12, 4))
+    plt.plot(time_s, raw, label="Raw ECG", alpha=0.7)
+    plt.scatter(peak_timestamps, peak_amplitudes, color="red", marker="x", label="R-Peaks")
+    plt.title("Pan-Tompkins R-Peak Detection")
+    plt.xlabel("Time (s)")
+    plt.ylabel("Amplitude")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()

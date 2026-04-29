@@ -129,6 +129,50 @@ def preprocess_ecg_for_arrhythmia(
     }
 
 
+def estimate_qrs_width_ms(ecg, peak_idx, sampling_rate, search_half_window_s=0.12, threshold_fraction=0.20):
+    """Estimate QRS width directly from the ECG signal around one beat.
+
+    The width should come from the ECG morphology itself, not from the
+    Pan-Tompkins detector. This measures the contiguous excursion around the
+    local peak inside a small window centered on the beat.
+    """
+    half = int(search_half_window_s * sampling_rate)
+    start = max(0, peak_idx - half)
+    end = min(ecg.size - 1, peak_idx + half)
+    segment = ecg[start : end + 1]
+
+    if segment.size < 5:
+        return np.nan
+
+    baseline = np.median(segment)
+    envelope = np.abs(segment - baseline)
+    peak_envelope = float(np.max(envelope))
+
+    if peak_envelope <= 1e-9:
+        return np.nan
+
+    threshold = float(threshold_fraction) * peak_envelope
+    above_threshold = envelope >= threshold
+    if not np.any(above_threshold):
+        return np.nan
+
+    center_idx = int(np.argmax(envelope))
+
+    left = center_idx
+    while left > 0 and above_threshold[left - 1]:
+        left -= 1
+
+    right = center_idx
+    while right < envelope.size - 1 and above_threshold[right + 1]:
+        right += 1
+
+    width_samples = right - left + 1
+    if width_samples <= 1:
+        return np.nan
+
+    return 1000.0 * width_samples / sampling_rate
+
+
 def save_outputs(all_analog_batches, channels, sampling_rate, output_file):
     if not all_analog_batches:
         print("[WARN] No samples were collected; skipping CSV export.")

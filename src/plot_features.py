@@ -1,4 +1,4 @@
-#run it: src/plot_features.py --input extrasystole_features.csv --output extrasystole_features_dashboard.png
+# run it: src/plot_features.py --input pvc_features.csv --output pvc_features_dashboard.png
 import argparse
 import sys
 from pathlib import Path
@@ -19,10 +19,8 @@ def load_features_csv(csv_path):
         "peak_time_s",
         "rr_prev_s",
         "prematurity_index",
-        "compensatory_pause_index",
         "qrs_width_ms",
-        "template_corr",
-        "is_extrasystole_candidate",
+        "is_pvc_candidate",
     }
     if not required.issubset(set(data.dtype.names)):
         raise ValueError("Input CSV does not include all expected feature columns")
@@ -36,7 +34,7 @@ def _safe_array(data, key):
 
 
 def _candidate_mask(data):
-    return np.asarray(data["is_extrasystole_candidate"], dtype=int) > 0
+    return np.asarray(data["is_pvc_candidate"], dtype=int) > 0
 
 
 def _finite_mask(*arrays):
@@ -50,9 +48,7 @@ def plot_feature_dashboard(data, output_file, show_plot=False):
     t = _safe_array(data, "peak_time_s")
     rr_prev = _safe_array(data, "rr_prev_s")
     prem = _safe_array(data, "prematurity_index")
-    comp = _safe_array(data, "compensatory_pause_index")
     qrs = _safe_array(data, "qrs_width_ms")
-    corr = _safe_array(data, "template_corr")
     candidates = _candidate_mask(data)
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 9))
@@ -96,51 +92,48 @@ def plot_feature_dashboard(data, output_file, show_plot=False):
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best")
 
-    # Panel 3: Prematurity vs compensatory pause
+    # Panel 3: Prematurity vs QRS width
     ax = axes[1, 0]
-    pc_mask = _finite_mask(prem, comp)
-    ax.scatter(prem[pc_mask], comp[pc_mask], s=22, color="#7f7f7f", alpha=0.7, label="All beats")
+    pc_mask = _finite_mask(prem, qrs)
+    ax.scatter(prem[pc_mask], qrs[pc_mask], s=22, color="#7f7f7f", alpha=0.7, label="All beats")
     if np.any(candidates & pc_mask):
         ax.scatter(
             prem[candidates & pc_mask],
-            comp[candidates & pc_mask],
+            qrs[candidates & pc_mask],
             s=34,
             color="#d62728",
             alpha=0.9,
-            label="Extrasystole candidates",
+            label="PVC candidates",
             zorder=3,
         )
     ax.axvline(0.80, color="#9467bd", linestyle="--", linewidth=1.0, label="Premature ref (0.80)")
-    ax.axhline(1.10, color="#8c564b", linestyle="--", linewidth=1.0, label="Pause ref (1.10)")
-    ax.set_title("Timing Pattern Space")
+    ax.axhline(110.0, color="#ff7f0e", linestyle="--", linewidth=1.0, label="Wide-QRS ref (110 ms)")
+    ax.set_title("PVC Timing/Morphology Space")
     ax.set_xlabel("Prematurity index")
-    ax.set_ylabel("Compensatory pause index")
+    ax.set_ylabel("QRS width (ms)")
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best")
 
-    # Panel 4: Morphology space (QRS width vs template correlation)
+    # Panel 4: Candidate density over time
     ax = axes[1, 1]
-    qc_mask = _finite_mask(qrs, corr)
-    ax.scatter(qrs[qc_mask], corr[qc_mask], s=22, color="#17becf", alpha=0.7, label="All beats")
-    if np.any(candidates & qc_mask):
+    ax.plot(t[qrs_mask], qrs[qrs_mask], color="#2ca02c", linewidth=1.0, label="QRS width")
+    if np.any(candidates & qrs_mask):
         ax.scatter(
-            qrs[candidates & qc_mask],
-            corr[candidates & qc_mask],
-            s=34,
+            t[candidates & qrs_mask],
+            qrs[candidates & qrs_mask],
             color="#d62728",
-            alpha=0.9,
-            label="Extrasystole candidates",
+            s=26,
+            label="PVC candidates",
             zorder=3,
         )
-    ax.axvline(110.0, color="#ff7f0e", linestyle="--", linewidth=1.0, label="Wide-QRS ref (110 ms)")
-    ax.axhline(0.90, color="#bcbd22", linestyle="--", linewidth=1.0, label="Low-corr ref (0.90)")
-    ax.set_title("Morphology Pattern Space")
-    ax.set_xlabel("QRS width (ms)")
-    ax.set_ylabel("Template correlation")
+    ax.axhline(110.0, color="#ff7f0e", linestyle="--", linewidth=1.0, label="Wide-QRS ref (110 ms)")
+    ax.set_title("QRS Width With PVC Candidates")
+    ax.set_xlabel("Peak time (s)")
+    ax.set_ylabel("QRS width (ms)")
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best")
 
-    fig.suptitle("Extrasystole Feature Dashboard", fontsize=14)
+    fig.suptitle("PVC Feature Dashboard", fontsize=14)
     fig.tight_layout()
     fig.savefig(output_file, dpi=220, bbox_inches="tight")
 
@@ -151,9 +144,9 @@ def plot_feature_dashboard(data, output_file, show_plot=False):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Visualize extrasystole feature CSV")
-    parser.add_argument("--input", default="extrasystole_features.csv", help="Input features CSV")
-    parser.add_argument("--output", default="extrasystole_features_dashboard.png", help="Output plot image")
+    parser = argparse.ArgumentParser(description="Visualize PVC feature CSV")
+    parser.add_argument("--input", default="pvc_features.csv", help="Input features CSV")
+    parser.add_argument("--output", default="pvc_features_dashboard.png", help="Output plot image")
     parser.add_argument("--show", action="store_true", help="Display plot window")
     return parser.parse_args()
 
