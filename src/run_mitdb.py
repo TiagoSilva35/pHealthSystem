@@ -302,7 +302,7 @@ def evaluate_record(
     qrs_width_threshold_ms,
     tolerance_ms,
     evaluation_mode,
-    detection_rule="and",
+    detection_rule="weighted",
     pvc_eval_ref=False,   # new flag: if True, evaluate PVC on all reference beats
 ):
     times, signal, sampling_rate = load_physiobank_record(record_path)
@@ -375,7 +375,7 @@ def batch_process_database(
     qrs_width_threshold_ms=95.0,
     tolerance_ms=50.0,
     evaluation_mode="beats",
-    detection_rule="and",
+    detection_rule="weighted",
     pvc_eval_ref=False,
 ):
     output_dir = Path(output_dir)
@@ -488,8 +488,8 @@ def parse_args():
                         help="Evaluation mode: 'beats' (QRS detection) or 'pvc' (PVC detection)")
     parser.add_argument("--pvc-eval-ref", action="store_true",
                         help="If set, evaluate PVC rule directly on reference beats (ignoring detector). Only used when --evaluation-mode=pvc")
-    parser.add_argument("--detection-rule", choices=["and", "or", "weighted"], default="and",
-                        help="PVC detection rule: 'and' (strict: both premature AND wide), 'or' (loose: either), 'weighted' (probabilistic)")
+    parser.add_argument("--detection-rule", choices=["and", "or", "weighted"], default="weighted",
+                        help="PVC detection rule: 'and' (strict: both premature AND wide), 'or' (loose: either), 'weighted' (probabilistic with continuous evidence accumulation)")
     return parser.parse_args()
 
 def main():

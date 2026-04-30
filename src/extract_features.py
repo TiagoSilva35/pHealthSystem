@@ -125,7 +125,7 @@ def compute_pvc_rule(
     Supported rules:
       - "and": beat is BOTH premature AND wide (strict, original logic)
       - "or":  beat is premature OR wide (looser, catches more)
-      - "weighted": probabilistic scoring (0.0 to 1.0)
+    - "weighted": probabilistic scoring (0.0 to 1.0) with continuous evidence accumulation
     """
     cond_premature = np.isfinite(prematurity_index) and prematurity_index < prematurity_threshold
     cond_wide = np.isfinite(qrs_width_ms) and qrs_width_ms > qrs_width_threshold_ms
@@ -140,19 +140,21 @@ def compute_pvc_rule(
         candidate = bool(cond_premature or cond_wide)
         score = float((cond_premature + cond_wide) / 2.0)
     elif detection_rule == "weighted":
-        # Probabilistic: blend prematurity and QRS width evidence
+        # Continuous evidence accumulation:
+        # - prematurity_score grows smoothly as the beat becomes earlier than the threshold
+        # - qrs_score grows smoothly as the QRS gets wider than the width threshold
+        prem_scale = max(0.05, 0.15 * prematurity_threshold)
+        qrs_scale = max(5.0, 0.20 * qrs_width_threshold_ms)
+
         prem_score = 0.0
-        qrs_score = 0.0
-        
         if np.isfinite(prematurity_index):
-            # Closer to threshold = higher score
-            prem_score = max(0.0, min(1.0, 1.0 - (prematurity_index / prematurity_threshold)))
-        
+            prem_score = 1.0 / (1.0 + np.exp((prematurity_index - prematurity_threshold) / prem_scale))
+
+        qrs_score = 0.0
         if np.isfinite(qrs_width_ms):
-            # Wider = higher score
-            qrs_score = min(1.0, max(0.0, (qrs_width_ms - prematurity_threshold) / 50.0))
-        
-        score = 0.6 * prem_score + 0.4 * qrs_score  # Prematurity weighted more heavily
+            qrs_score = 1.0 / (1.0 + np.exp(-(qrs_width_ms - qrs_width_threshold_ms) / qrs_scale))
+
+        score = 0.7 * prem_score + 0.3 * qrs_score  # Prematurity weighted more heavily
         candidate = score > 0.5
     else:
         raise ValueError(f"Unknown detection_rule: {detection_rule}")
