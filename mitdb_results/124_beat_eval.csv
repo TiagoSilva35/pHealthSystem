@@ -1,2 +1,0 @@
-record,reference_beats,detected_beats,TP,FP,FN,SE_percent,PPV_percent,F1_percent,sampling_rate_hz,duration_s
-124,1580,1616,1547,69,33,97.9113924050633,95.73019801980197,96.80851063829788,360.0,1805.5527777777777
