@@ -1,2 +1,2 @@
-record,reference_pvc_beats,detected_pvc_candidates,TP_pvc,FP_pvc,FN_pvc,TN_pvc,Sensitivity_pvc_percent,Specificity_pvc_percent,Accuracy_pvc_percent,PPV_pvc_percent,F1_pvc_percent,sampling_rate_hz,duration_s
-118,16,32,13,10,3,2252,81.25,99.5579133510168,99.42932396839333,56.52173913043478,66.66666666666666,360.0,1805.5527777777777
+record,reference_pvc_beats,detected_pvc_candidates,reference_beats,detected_beats,TP_pvc,FP_pvc,FN_pvc,TN_pvc,Sensitivity_pvc_percent,Specificity_pvc_percent,Accuracy_pvc_percent,PPV_pvc_percent,F1_pvc_percent,reference_pvc_burden_percent,reference_pvc_rate_per_hour,reference_possible_vt,detected_pvc_burden_percent,detected_pvc_rate_per_hour,detected_possible_vt,sampling_rate_hz,duration_s
+118,16,32,2278,2278,13,10,3,2252,81.25,99.5579133510168,99.42932396839333,56.52173913043478,66.66666666666666,0.7023705004389815,31.90158754090391,False,1.404741000877963,63.80317508180782,False,360.0,1805.5527777777777

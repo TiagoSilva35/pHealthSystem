@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from src.algorithms.mlp_pvc import FEATURE_KEYS, get_mlp_predictor
+from src.helpers.clinical_metrics import compute_pvc_burden_metrics
 from src.helpers.signal_processing import estimate_qrs_width_ms
 from src.algorithms.pan_thompkins import PanThompkinsQRS
 
@@ -475,10 +476,14 @@ def main():
     save_peak_time_plot(times, ecg_cleaned, features, args.plot, show_plot=args.show)
 
     n_candidates = int(sum(row["is_pvc_candidate"] for row in features))
+    duration_s = float(times[-1] - times[0]) if len(times) > 1 else 0.0
+    burden_metrics = compute_pvc_burden_metrics(n_candidates, len(features), duration_s=duration_s)
     print(f"[INFO] Sampling rate inferred: {sampling_rate:.2f} Hz")
     print(f"[INFO] Detection rule: {args.detection_rule}")
     print(f"[INFO] Detected beats: {len(features)}")
     print(f"[INFO] PVC candidates: {n_candidates}")
+    print(f"[INFO] PVC burden: {burden_metrics['pvc_burden_percent']:.2f}%")
+    print(f"[INFO] PVC rate: {burden_metrics['pvc_rate_per_hour']:.2f}/hour")
     print(f"[INFO] Saved feature table to {args.output}")
     if args.show:
         print("[INFO] Displayed peak-time plot interactively (no PNG saved)")

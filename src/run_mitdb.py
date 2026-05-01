@@ -23,12 +23,15 @@ import wfdb
 
 from src.extract_features import extract_extrasystole_features, save_peak_time_plot
 from src.algorithms.mlp_pvc import DS2_RECORDS
+from src.helpers.clinical_metrics import compute_pvc_burden_metrics
 from src.helpers.plot_signals import plot_signals
 from src.helpers.signal_processing import (
     estimate_qrs_width_ms,
     load_ecg_csv,
     preprocess_ecg_for_arrhythmia,
 )
+
+VT_BURDEN_THRESHOLD_PERCENT = 10.0
 
 # ----------------------------------------------------------------------
 # Constants
@@ -147,10 +150,25 @@ def compute_pvc_detection_metrics_matched(
     ppv  = 100.0 * tp / (tp + fp) if (tp + fp) > 0 else 0.0
     f1   = 2.0 * tp / (2 * tp + fp + fn) * 100.0 if (2 * tp + fp + fn) > 0 else 0.0
 
+    detected_burden = compute_pvc_burden_metrics(
+        int(np.sum(is_pvc_pred)),
+        len(is_pvc_pred),
+        duration_s,
+        vt_burden_threshold_percent=VT_BURDEN_THRESHOLD_PERCENT,
+    )
+    reference_burden = compute_pvc_burden_metrics(
+        int(np.sum(pvc_labels)),
+        ref_count,
+        duration_s,
+        vt_burden_threshold_percent=VT_BURDEN_THRESHOLD_PERCENT,
+    )
+
     return {
         "record": record_name,
         "reference_pvc_beats": int(np.sum(pvc_labels)),
         "detected_pvc_candidates": int(np.sum(is_pvc_pred)),
+        "reference_beats": int(ref_count),
+        "detected_beats": int(len(is_pvc_pred)),
         "TP_pvc": tp,
         "FP_pvc": fp,
         "FN_pvc": fn,
@@ -160,6 +178,12 @@ def compute_pvc_detection_metrics_matched(
         "Accuracy_pvc_percent": acc,
         "PPV_pvc_percent": ppv,
         "F1_pvc_percent": f1,
+        "reference_pvc_burden_percent": reference_burden["pvc_burden_percent"],
+        "reference_pvc_rate_per_hour": reference_burden["pvc_rate_per_hour"],
+        "reference_possible_vt": reference_burden["possible_vt_from_burden"],
+        "detected_pvc_burden_percent": detected_burden["pvc_burden_percent"],
+        "detected_pvc_rate_per_hour": detected_burden["pvc_rate_per_hour"],
+        "detected_possible_vt": detected_burden["possible_vt_from_burden"],
         "sampling_rate_hz": sampling_rate,
         "duration_s": duration_s,
     }
@@ -208,10 +232,25 @@ def compute_pvc_detection_metrics_reference(
     ppv  = 100.0 * tp / (tp + fp) if (tp + fp) > 0 else 0.0
     f1   = 2.0 * tp / (2 * tp + fp + fn) * 100.0 if (2 * tp + fp + fn) > 0 else 0.0
 
+    detected_burden = compute_pvc_burden_metrics(
+        tp + fp,
+        len(pvc_labels),
+        duration_s,
+        vt_burden_threshold_percent=VT_BURDEN_THRESHOLD_PERCENT,
+    )
+    reference_burden = compute_pvc_burden_metrics(
+        int(np.sum(pvc_labels)),
+        len(pvc_labels),
+        duration_s,
+        vt_burden_threshold_percent=VT_BURDEN_THRESHOLD_PERCENT,
+    )
+
     return {
         "record": record_name,
         "reference_pvc_beats": int(np.sum(pvc_labels)),
         "detected_pvc_candidates": tp + fp,  # number of reference beats classified as PVC
+        "reference_beats": int(len(pvc_labels)),
+        "detected_beats": int(len(pvc_labels)),
         "TP_pvc": tp,
         "FP_pvc": fp,
         "FN_pvc": fn,
@@ -221,6 +260,12 @@ def compute_pvc_detection_metrics_reference(
         "Accuracy_pvc_percent": acc,
         "PPV_pvc_percent": ppv,
         "F1_pvc_percent": f1,
+        "reference_pvc_burden_percent": reference_burden["pvc_burden_percent"],
+        "reference_pvc_rate_per_hour": reference_burden["pvc_rate_per_hour"],
+        "reference_possible_vt": reference_burden["possible_vt_from_burden"],
+        "detected_pvc_burden_percent": detected_burden["pvc_burden_percent"],
+        "detected_pvc_rate_per_hour": detected_burden["pvc_rate_per_hour"],
+        "detected_possible_vt": detected_burden["possible_vt_from_burden"],
         "sampling_rate_hz": sampling_rate,
         "duration_s": duration_s,
     }
@@ -274,17 +319,34 @@ def aggregate_pvc_metrics(summaries):
     total_fp = int(ok["FP_pvc"].sum())
     total_fn = int(ok["FN_pvc"].sum())
     total_tn = int(ok["TN_pvc"].sum())
+    total_reference_beats = int(ok["reference_beats"].sum())
+    total_detected_beats = int(ok["detected_beats"].sum())
+    total_duration_s = float(ok["duration_s"].sum())
 
     global_sens = 100.0 * total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
     global_spec = 100.0 * total_tn / (total_tn + total_fp) if (total_tn + total_fp) > 0 else 0.0
     global_acc  = 100.0 * (total_tp + total_tn) / (total_tp + total_fp + total_fn + total_tn) if (total_tp + total_fp + total_fn + total_tn) > 0 else 0.0
     global_ppv  = 100.0 * total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
     global_f1   = 2.0 * total_tp / (2 * total_tp + total_fp + total_fn) * 100.0 if (2 * total_tp + total_fp + total_fn) > 0 else 0.0
+    global_reference_burden = compute_pvc_burden_metrics(
+        int(ok["reference_pvc_beats"].sum()),
+        total_reference_beats,
+        total_duration_s,
+        vt_burden_threshold_percent=VT_BURDEN_THRESHOLD_PERCENT,
+    )
+    global_detected_burden = compute_pvc_burden_metrics(
+        int(ok["detected_pvc_candidates"].sum()),
+        total_detected_beats,
+        total_duration_s,
+        vt_burden_threshold_percent=VT_BURDEN_THRESHOLD_PERCENT,
+    )
 
     global_row = {
         "record": "GLOBAL",
         "reference_pvc_beats": int(ok["reference_pvc_beats"].sum()),
         "detected_pvc_candidates": int(ok["detected_pvc_candidates"].sum()),
+        "reference_beats": total_reference_beats,
+        "detected_beats": total_detected_beats,
         "TP_pvc": total_tp,
         "FP_pvc": total_fp,
         "FN_pvc": total_fn,
@@ -294,8 +356,14 @@ def aggregate_pvc_metrics(summaries):
         "Accuracy_pvc_percent": global_acc,
         "PPV_pvc_percent": global_ppv,
         "F1_pvc_percent": global_f1,
+        "reference_pvc_burden_percent": global_reference_burden["pvc_burden_percent"],
+        "reference_pvc_rate_per_hour": global_reference_burden["pvc_rate_per_hour"],
+        "reference_possible_vt": global_reference_burden["possible_vt_from_burden"],
+        "detected_pvc_burden_percent": global_detected_burden["pvc_burden_percent"],
+        "detected_pvc_rate_per_hour": global_detected_burden["pvc_rate_per_hour"],
+        "detected_possible_vt": global_detected_burden["possible_vt_from_burden"],
         "sampling_rate_hz": "",
-        "duration_s": float(ok["duration_s"].sum()),
+        "duration_s": total_duration_s,
     }
     return pd.concat([df, pd.DataFrame([global_row])], ignore_index=True)
 
@@ -334,8 +402,8 @@ def evaluate_ecg_csv(
 
     detected_beats = len(features)
     pvc_candidates = int(sum(row["is_pvc_candidate"] for row in features))
-    duration_s = float(times[-1]) if len(times) else 0.0
-    pvc_ratio = 100.0 * pvc_candidates / detected_beats if detected_beats > 0 else 0.0
+    duration_s = float(times[-1] - times[0]) if len(times) > 1 else 0.0
+    pvc_burden = compute_pvc_burden_metrics(pvc_candidates, detected_beats, duration_s)
 
     summary = {
         "record": input_path.name,
@@ -343,7 +411,9 @@ def evaluate_ecg_csv(
         "duration_s": duration_s,
         "detected_beats": detected_beats,
         "detected_pvc_candidates": pvc_candidates,
-        "pvc_ratio_percent": pvc_ratio,
+        "pvc_burden_percent": pvc_burden["pvc_burden_percent"],
+        "pvc_rate_per_hour": pvc_burden["pvc_rate_per_hour"],
+        "pvc_ratio_percent": pvc_burden["pvc_burden_percent"],
         "detection_rule": detection_rule,
     }
 
@@ -381,7 +451,9 @@ def evaluate_ecg_csv(
     print(f"[INFO] Processed ECG CSV: {csv_path}")
     print(f"[INFO] Sampling rate inferred: {sampling_rate:.2f} Hz")
     print(f"[INFO] Detected beats: {detected_beats}")
-    print(f"[INFO] Extrasystole candidates: {pvc_candidates} ({pvc_ratio:.2f}%)")
+    print(f"[INFO] PVC burden: {pvc_burden['pvc_burden_percent']:.2f}%")
+    print(f"[INFO] PVC rate: {pvc_burden['pvc_rate_per_hour']:.2f}/hour")
+    print(f"[INFO] Extrasystole candidates: {pvc_candidates}")
     print(f"[INFO] Saved summary to {summary_csv}")
     print(f"[INFO] Saved beat features to {features_csv}")
     if skip_plots:
@@ -579,10 +651,13 @@ def batch_process_database(
             cols = ["record", "reference_beats", "detected_beats",
                     "TP", "FP", "FN", "SE_percent", "PPV_percent", "F1_percent"]
         else:
-            cols = ["record", "reference_pvc_beats", "detected_pvc_candidates",
+            cols = ["record", "reference_beats", "detected_beats", "reference_pvc_beats", "detected_pvc_candidates",
                     "TP_pvc", "FP_pvc", "FN_pvc", "TN_pvc",
                     "Sensitivity_pvc_percent", "Specificity_pvc_percent",
-                    "Accuracy_pvc_percent", "PPV_pvc_percent", "F1_pvc_percent"]
+                "Accuracy_pvc_percent", "PPV_pvc_percent", "F1_pvc_percent",
+                "reference_pvc_burden_percent", "detected_pvc_burden_percent",
+            "reference_pvc_rate_per_hour", "detected_pvc_rate_per_hour",
+            "reference_possible_vt", "detected_possible_vt"]
         print(summary_df[cols].to_string(index=False))
 
 # ----------------------------------------------------------------------
