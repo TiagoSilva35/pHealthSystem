@@ -56,11 +56,6 @@ def load_cleaned_ecg_csv(csv_path):
     return times, signal, sampling_rate
 
 
-def robust_std(values):
-    """Robust spread estimate via MAD (Mitral annular disjunction), less sensitive to spikes/outliers."""
-    median = np.median(values)
-    mad = np.median(np.abs(values - median))
-    return 1.4826 * mad + 1e-9
 
 
 def detect_r_peaks(ecg, sampling_rate, min_peak_distance_s=0.25, prominence_factor=1.0, refractory_s=0.30):
@@ -76,49 +71,17 @@ def detect_r_peaks(ecg, sampling_rate, min_peak_distance_s=0.25, prominence_fact
     return np.asarray(result.get("r_peaks", []), dtype=int)
 
 
-def extract_beat_windows(ecg, peaks, sampling_rate, pre_s=0.20, post_s=0.40):
-    """Cut fixed windows around each R-peak for morphology comparison."""
-    pre = int(pre_s * sampling_rate)
-    post = int(post_s * sampling_rate)
 
-    valid_peaks = []
-    windows = []
-    for peak in peaks:
-        start = peak - pre
-        end = peak + post
-        if start < 0 or end >= ecg.size:
-            continue
-        valid_peaks.append(int(peak))
-        windows.append(ecg[start:end])
-
-    if not windows:
-        return np.empty((0,), dtype=int), np.empty((0, pre + post), dtype=float)
-
-    return np.asarray(valid_peaks, dtype=int), np.vstack(windows)
-
-
-def compute_local_shape_features(ecg, peak_idx, sampling_rate, window_s=0.06):
-    """Compute local morphology descriptors around one beat."""
-    half = int(window_s * sampling_rate)
-    start = max(0, peak_idx - half)
-    end = min(ecg.size - 1, peak_idx + half)
-    local = ecg[start : end + 1]
-    if local.size < 3:
-        return np.nan, np.nan, np.nan
-
-    peak_to_peak = float(np.max(local) - np.min(local))
-    centered = local - np.median(local)
-    qrs_area = float(np.sum(np.abs(centered)) / sampling_rate)
-    max_slope = float(np.max(np.abs(np.diff(local))) * sampling_rate)
-    return peak_to_peak, qrs_area, max_slope
 
 
 def compute_pvc_rule(
     prematurity_index,
     qrs_width_ms,
+    morphology_score=None,
     prematurity_threshold=0.80,
     qrs_width_threshold_ms=130.0,
     detection_rule="and",
+    morph_threshold=0.30,
 ):
     """Apply PVC detection rule and return (candidate_flag, score).
     
@@ -129,22 +92,28 @@ def compute_pvc_rule(
     """
     cond_premature = np.isfinite(prematurity_index) and prematurity_index < prematurity_threshold
     cond_wide = np.isfinite(qrs_width_ms) and qrs_width_ms > qrs_width_threshold_ms
+    cond_morph = False
+    morph_evidence_score = 0.0
+    if morphology_score is not None and np.isfinite(morphology_score):
+        # morphology_score is similarity to a median-normal QRS (1.0 identical, 0.0 opposite)
+        morph_evidence_score = float(1.0 - float(morphology_score))
+        cond_morph = morph_evidence_score > float(morph_threshold)
     
     if detection_rule == "and":
-        # Strict: must match both conditions
+        # Strict: must match both primary conditions. If morphology is available, include it in the
+        # aggregated score but keep strict candidate logic based on prematurity+width.
         candidate = bool(cond_premature and cond_wide)
-        # Score ranges 0-1: 0 if neither, 0.5 if one, 1 if both
-        score = float((cond_premature + cond_wide) / 2.0)
+        denom = 2.0 + (1.0 if (morphology_score is not None and np.isfinite(morphology_score)) else 0.0)
+        score = float((float(cond_premature) + float(cond_wide) + (float(cond_morph) if denom > 2.0 else 0.0)) / denom)
     elif detection_rule == "or":
-        # Loose: match either condition
+        # Loose: match either primary condition. Average available evidence for score.
         candidate = bool(cond_premature or cond_wide)
-        score = float((cond_premature + cond_wide) / 2.0)
+        denom = 2.0 + (1.0 if (morphology_score is not None and np.isfinite(morphology_score)) else 0.0)
+        score = float((float(cond_premature) + float(cond_wide) + (float(cond_morph) if denom > 2.0 else 0.0)) / denom)
     elif detection_rule == "weighted":
-        # Continuous evidence accumulation:
-        # - prematurity_score grows smoothly as the beat becomes earlier than the threshold
-        # - qrs_score grows smoothly as the QRS gets wider than the width threshold
+        # Continuous evidence accumulation across prematurity, width and morphology-evidence.
         prem_scale = max(0.05, 0.15 * prematurity_threshold)
-        qrs_scale = max(5.0, 0.20 * qrs_width_threshold_ms)
+        qrs_scale = max(5.0, 0.30 * qrs_width_threshold_ms)
 
         prem_score = 0.0
         if np.isfinite(prematurity_index):
@@ -154,8 +123,14 @@ def compute_pvc_rule(
         if np.isfinite(qrs_width_ms):
             qrs_score = 1.0 / (1.0 + np.exp(-(qrs_width_ms - qrs_width_threshold_ms) / qrs_scale))
 
-        score = 0.7 * prem_score + 0.3 * qrs_score  # Prematurity weighted more heavily
-        candidate = score > 0.5
+        # morphology contributes as "evidence of abnormal morphology" = 1 - similarity
+        morph_score = 0.0
+        if morphology_score is not None and np.isfinite(morphology_score):
+            morph_score = morph_evidence_score
+
+        # weights chosen to prioritise prematurity, then width, then morphology
+        score = 0.55 * prem_score + 0.30 * qrs_score + 0.15 * morph_score
+        candidate = score > 0.50
     else:
         raise ValueError(f"Unknown detection_rule: {detection_rule}")
     
@@ -178,6 +153,7 @@ def extract_extrasystole_features(
     Candidate rule uses two signals together:
     1) beat is early (premature),
     2) QRS is wide.
+    3) Optional morphology evidence (weighted in "weighted" mode)
     
     Parameters:
       - detection_rule: "and" (both conditions), "or" (either), "weighted" (probabilistic)
@@ -203,6 +179,107 @@ def extract_extrasystole_features(
 
     # Baseline RR approximates the patient's local "normal" cycle length.
     rr_baseline = float(np.median(rr_values)) if rr_values.size else np.nan
+    # Compute per-beat QRS morphology similarity to a median template built from the same signal.
+    # Use iterative template refinement and small-shift alignment to make the template robust
+    # against outliers and minor alignment errors.
+    morph_window_s = 0.12
+    half_samples = int(morph_window_s * sampling_rate)
+    seg_len = 2 * half_samples + 1
+    segments = []
+    valid = []
+    for peak in peaks:
+        start = int(peak) - half_samples
+        end = int(peak) + half_samples
+        if start >= 0 and end < ecg_cleaned.size:
+            segments.append(np.asarray(ecg_cleaned[start : end + 1], dtype=float))
+            valid.append(True)
+        else:
+            segments.append(np.full(seg_len, np.nan))
+            valid.append(False)
+
+    segments = np.asarray(segments)
+    valid_mask = np.asarray(valid, dtype=bool)
+    morph_scores = np.full(peaks.size, np.nan)
+
+    if np.sum(valid_mask) > 0:
+        # Parameters for refinement
+        max_iters = 3
+        refine_frac = 0.25  # drop bottom 25% of segments by similarity each iter
+        max_shift = max(1, int(0.02 * sampling_rate))  # allow +-20 ms alignment
+
+        # Start with the raw valid segments
+        aligned_segments = [segments[i].copy() for i in range(len(segments)) if valid_mask[i]]
+
+        for it in range(max_iters):
+            template = np.median(np.vstack(aligned_segments), axis=0)
+            tmpl = template - np.mean(template)
+            tmpl_norm = float(np.linalg.norm(tmpl))
+
+            corrs = []
+            new_aligned = []
+            for seg in aligned_segments:
+                seg_z = seg - np.mean(seg)
+                best_corr = -1.0
+                best_shift = 0
+                # search small shifts to compensate for mis-centering
+                for shift in range(-max_shift, max_shift + 1):
+                    s_shift = np.roll(seg_z, shift)
+                    s_norm = float(np.linalg.norm(s_shift))
+                    if tmpl_norm > 0.0 and s_norm > 0.0:
+                        c = float(np.dot(s_shift, tmpl) / (s_norm * tmpl_norm))
+                    else:
+                        c = 0.0
+                    if c > best_corr:
+                        best_corr = c
+                        best_shift = shift
+
+                # apply best shift to the original (not zero-mean) seg and store mean-removed version
+                seg_aligned = np.roll(seg, best_shift)
+                seg_aligned = seg_aligned - np.mean(seg_aligned)
+                new_aligned.append(seg_aligned)
+                corrs.append(best_corr)
+
+            corrs = np.asarray(corrs, dtype=float)
+            # If refinement requested, drop lowest similarity fraction and continue
+            if refine_frac > 0 and it < max_iters - 1 and corrs.size > 0:
+                thresh = np.percentile(corrs, 100.0 * refine_frac)
+                keep_mask = corrs >= thresh
+                if np.all(keep_mask):
+                    aligned_segments = new_aligned
+                    break
+                aligned_segments = [s for k, s in zip(keep_mask, new_aligned) if k]
+                if len(aligned_segments) == 0:
+                    # can't refine further
+                    aligned_segments = new_aligned
+                    break
+            else:
+                aligned_segments = new_aligned
+                break
+
+        # Final template and per-segment similarity (map from -1..1 to 0..1)
+        final_template = np.median(np.vstack(aligned_segments), axis=0)
+        final_t = final_template - np.mean(final_template)
+        final_t_norm = float(np.linalg.norm(final_t))
+
+        # compute score for each original valid segment (with alignment)
+        idx_valid = np.flatnonzero(valid_mask)
+        for idx_pos, seg_idx in enumerate(idx_valid):
+            seg = segments[seg_idx]
+            seg_z = seg - np.mean(seg)
+            # find best small shift against final template
+            best_corr = -1.0
+            for shift in range(-max_shift, max_shift + 1):
+                s_shift = np.roll(seg_z, shift)
+                s_norm = float(np.linalg.norm(s_shift))
+                if final_t_norm > 0.0 and s_norm > 0.0:
+                    c = float(np.dot(s_shift, final_t) / (s_norm * final_t_norm))
+                else:
+                    c = 0.0
+                if c > best_corr:
+                    best_corr = c
+
+            # map correlation [-1,1] -> [0,1]; higher = more similar
+            morph_scores[seg_idx] = float((best_corr + 1.0) / 2.0) if best_corr is not None else np.nan
 
     features = []
     for i, peak in enumerate(peaks):
@@ -217,6 +294,7 @@ def extract_extrasystole_features(
         is_candidate, pvc_score = compute_pvc_rule(
             prematurity_index,
             qrs_width_ms,
+            morphology_score=(float(morph_scores[i]) if np.isfinite(morph_scores[i]) else None),
             prematurity_threshold=prematurity_threshold,
             qrs_width_threshold_ms=qrs_width_threshold_ms,
             detection_rule=detection_rule,
@@ -232,6 +310,7 @@ def extract_extrasystole_features(
                 "prematurity_index": prematurity_index,
                 "qrs_width_ms": qrs_width_ms,
                 "pvc_score": pvc_score,
+                "morphology_score": (float(morph_scores[i]) if np.isfinite(morph_scores[i]) else np.nan),
                 "is_pvc_candidate": is_candidate,
             }
         )
@@ -250,6 +329,7 @@ def save_features_csv(features, output_csv):
         "prematurity_index",
         "qrs_width_ms",
         "pvc_score",
+        "morphology_score",
         "is_pvc_candidate",
     ]
 

@@ -39,13 +39,6 @@ def load_ecg_csv(csv_path):
     return times, ecg, sampling_rate
 
 
-def _lowpass_for_artifacts(ecg, sampling_rate, cutoff_hz=40.0, order=4):
-    nyquist = 0.5 * sampling_rate
-    normalized = cutoff_hz / nyquist
-    sos = signal.butter(order, normalized, btype="lowpass", output="sos")
-    return signal.sosfiltfilt(sos, ecg)
-
-
 def bandpass_filter_ecg(ecg, sampling_rate, low_hz=0.5, high_hz=40.0, order=4):
     nyquist = 0.5 * sampling_rate
     if not 0 < low_hz < high_hz < nyquist:
@@ -118,18 +111,15 @@ def preprocess_ecg_for_arrhythmia(
     )
     artifact_reduced, artifact_samples = suppress_transient_artifacts(powerline_removed)
 
-    # Optional low-pass clean-up to reduce remaining broadband noise.
-    final = _lowpass_for_artifacts(artifact_reduced, sampling_rate, cutoff_hz=high_hz)
-
     return {
-        "cleaned": final,
+        "cleaned": artifact_reduced,
         "artifact_samples": artifact_samples,
         "quality_raw": compute_signal_quality(ecg),
-        "quality_cleaned": compute_signal_quality(final),
+        "quality_cleaned": compute_signal_quality(artifact_reduced),
     }
 
 
-def estimate_qrs_width_ms(ecg, peak_idx, sampling_rate, search_half_window_s=0.12, threshold_fraction=0.20):
+def estimate_qrs_width_ms(ecg, peak_idx, sampling_rate, search_half_window_s=0.12, threshold_fraction=0.10):
     """Estimate QRS width directly from the ECG signal around one beat.
 
     The width should come from the ECG morphology itself, not from the
