@@ -22,9 +22,11 @@ import pandas as pd
 import wfdb
 
 from src.extract_features import extract_extrasystole_features, save_peak_time_plot
+from src.algorithms.mlp_pvc import DS2_RECORDS
 from src.helpers.plot_signals import plot_signals
 from src.helpers.signal_processing import (
     estimate_qrs_width_ms,
+    load_ecg_csv,
     preprocess_ecg_for_arrhythmia,
 )
 
@@ -298,6 +300,98 @@ def aggregate_pvc_metrics(summaries):
     return pd.concat([df, pd.DataFrame([global_row])], ignore_index=True)
 
 # ----------------------------------------------------------------------
+# Single CSV evaluation (ecg_samples.csv flow)
+# ----------------------------------------------------------------------
+def evaluate_ecg_csv(
+    csv_path,
+    output_dir,
+    skip_plots=False,
+    show_plots=False,
+    min_peak_distance_s=0.25,
+    refractory_s=0.30,
+    prematurity_threshold=0.80,
+    qrs_width_threshold_ms=110.0,
+    detection_rule="and",
+):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    input_path = Path(csv_path)
+    times, signal, sampling_rate = load_ecg_csv(str(input_path))
+    preprocessed = preprocess_ecg_for_arrhythmia(signal, sampling_rate, notch_hz=60.0)
+    clean_signal = preprocessed["cleaned"]
+
+    features = extract_extrasystole_features(
+        times,
+        clean_signal,
+        sampling_rate=sampling_rate,
+        min_peak_distance_s=min_peak_distance_s,
+        refractory_s=refractory_s,
+        prematurity_threshold=prematurity_threshold,
+        qrs_width_threshold_ms=qrs_width_threshold_ms,
+        detection_rule=detection_rule,
+    )
+
+    detected_beats = len(features)
+    pvc_candidates = int(sum(row["is_pvc_candidate"] for row in features))
+    duration_s = float(times[-1]) if len(times) else 0.0
+    pvc_ratio = 100.0 * pvc_candidates / detected_beats if detected_beats > 0 else 0.0
+
+    summary = {
+        "record": input_path.name,
+        "sampling_rate_hz": float(sampling_rate),
+        "duration_s": duration_s,
+        "detected_beats": detected_beats,
+        "detected_pvc_candidates": pvc_candidates,
+        "pvc_ratio_percent": pvc_ratio,
+        "detection_rule": detection_rule,
+    }
+
+    stem = input_path.stem
+    summary_csv = output_dir / f"{stem}_csv_eval.csv"
+    features_csv = output_dir / f"{stem}_detected_beats.csv"
+    final_plot = output_dir / f"{stem}_detected_peaks.png"
+
+    with open(summary_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(summary.keys()))
+        writer.writeheader()
+        writer.writerow(summary)
+
+    if features:
+        pd.DataFrame(features).to_csv(features_csv, index=False)
+    else:
+        pd.DataFrame(
+            columns=[
+                "beat_index",
+                "peak_time_s",
+                "rr_prev_s",
+                "rr_next_s",
+                "rr_baseline_s",
+                "prematurity_index",
+                "qrs_width_ms",
+                "pvc_score",
+                "morphology_score",
+                "is_pvc_candidate",
+            ]
+        ).to_csv(features_csv, index=False)
+
+    if not skip_plots:
+        save_peak_time_plot(times, clean_signal, features, str(final_plot), show_plot=show_plots)
+
+    print(f"[INFO] Processed ECG CSV: {csv_path}")
+    print(f"[INFO] Sampling rate inferred: {sampling_rate:.2f} Hz")
+    print(f"[INFO] Detected beats: {detected_beats}")
+    print(f"[INFO] Extrasystole candidates: {pvc_candidates} ({pvc_ratio:.2f}%)")
+    print(f"[INFO] Saved summary to {summary_csv}")
+    print(f"[INFO] Saved beat features to {features_csv}")
+    if skip_plots:
+        print("[INFO] Plot generation skipped")
+    elif show_plots:
+        print("[INFO] Displayed final beats/extrasystoles plot interactively")
+    else:
+        print(f"[INFO] Saved final beats/extrasystoles plot to {final_plot}")
+
+# ----------------------------------------------------------------------
 # Main record evaluation (dispatches to helpers)
 # ----------------------------------------------------------------------
 def evaluate_record(
@@ -400,6 +494,7 @@ def batch_process_database(
     summaries = []
     for record_name in records:
         record_path = db_path / record_name
+
         
         # For PVC evaluation, skip records with < 10 reference PVC beats
         if evaluation_mode == "pvc":
@@ -494,8 +589,10 @@ def batch_process_database(
 # Argument parsing
 # ----------------------------------------------------------------------
 def parse_args():
-    parser = argparse.ArgumentParser(description="MIT-BIH beat / PVC detection evaluation")
-    parser.add_argument("--database", required=True, help="Path to MIT-BIH WFDB database directory")
+    parser = argparse.ArgumentParser(description="MIT-BIH or local ECG CSV beat / PVC detection evaluation")
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument("--database", help="Path to MIT-BIH WFDB database directory")
+    input_group.add_argument("--ecg-csv", help="Path to a local ECG CSV file with columns time_s,ecg")
     parser.add_argument("--output", default="mitdb_results", help="Output directory")
     parser.add_argument("--skip-plots", action="store_true", help="Skip generating plots")
     parser.add_argument("--sample-record", default=None, help="Record name to visualise with extra plots")
@@ -509,12 +606,26 @@ def parse_args():
                         help="Evaluation mode: 'beats' (QRS detection) or 'pvc' (PVC detection)")
     parser.add_argument("--pvc-eval-ref", action="store_true",
                         help="If set, evaluate PVC rule directly on reference beats (ignoring detector). Only used when --evaluation-mode=pvc")
-    parser.add_argument("--detection-rule", choices=["and", "or", "weighted"], default="and",
-                        help="PVC detection rule: 'and' (strict: both premature AND wide), 'or' (loose: either), 'weighted' (probabilistic with continuous evidence accumulation)")
+    parser.add_argument("--detection-rule", choices=["and", "or", "weighted", "mlp"], default="and",
+                        help="PVC detection rule: 'and' (strict), 'or' (loose), 'weighted' (heuristic score), 'mlp' (trained neural baseline)")
     return parser.parse_args()
 
 def main():
     args = parse_args()
+    if args.ecg_csv:
+        evaluate_ecg_csv(
+            csv_path=args.ecg_csv,
+            output_dir=args.output,
+            skip_plots=args.skip_plots,
+            show_plots=args.show,
+            min_peak_distance_s=args.min_peak_distance,
+            refractory_s=args.refractory,
+            prematurity_threshold=args.prematurity_threshold,
+            qrs_width_threshold_ms=args.qrs_width_threshold_ms,
+            detection_rule=args.detection_rule,
+        )
+        return
+
     batch_process_database(
         args.database, args.output,
         skip_plots=args.skip_plots,

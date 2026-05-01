@@ -1,0 +1,2 @@
+record,sampling_rate_hz,duration_s,detected_beats,detected_pvc_candidates,pvc_ratio_percent,detection_rule
+ecg_samples.csv,1000.0000000005542,59.969,65,7,10.76923076923077,and

@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from src.algorithms.mlp_pvc import FEATURE_KEYS, get_mlp_predictor
 from src.helpers.signal_processing import estimate_qrs_width_ms
 from src.algorithms.pan_thompkins import PanThompkinsQRS
 
@@ -16,6 +17,15 @@ Glossary:
 - QRS complex: fast ventricular depolarization segment around the R-peak.
 - Prematurity index: how early a beat occurs relative to the baseline RR.
 """
+
+_MLP_PREDICTOR = None
+
+
+def _get_mlp_model():
+    global _MLP_PREDICTOR
+    if _MLP_PREDICTOR is None:
+        _MLP_PREDICTOR = get_mlp_predictor()
+    return _MLP_PREDICTOR
 
 
 def load_cleaned_ecg_csv(csv_path):
@@ -134,7 +144,31 @@ def robust_baseline(values):
 def compute_pvc_rule(
     prem_index, width_index, morphology_score=None, detection_rule="weighted",
     prem_thr=0.92, width_thr=1.15, morph_sim_thr=0.85, pause_index=None, pause_thr=1.2,
+    rr_prev_s=np.nan, rr_next_s=np.nan, rr_baseline_s=np.nan, aa_ratio=np.nan,
+    morph_index=np.nan, qrs_width_ms=np.nan,
 ):
+    if detection_rule == "mlp":
+        predict = _get_mlp_model()
+        feature_vector = np.array(
+            [
+                rr_prev_s,
+                rr_next_s,
+                rr_baseline_s,
+                prem_index,
+                aa_ratio,
+                morph_index,
+                qrs_width_ms,
+                width_index,
+                pause_index,
+                morphology_score,
+            ],
+            dtype=float,
+        )
+        if feature_vector.size != len(FEATURE_KEYS):
+            raise ValueError(f"MLP feature vector must have {len(FEATURE_KEYS)} values.")
+        probability = float(predict(feature_vector))
+        return int(probability > 0.5), probability
+
     cond_prem = np.isfinite(prem_index) and prem_index < prem_thr
     cond_wide = np.isfinite(width_index) and width_index > width_thr
     cond_morph = morphology_score is not None and np.isfinite(morphology_score) and morphology_score < morph_sim_thr
@@ -151,8 +185,12 @@ def compute_pvc_rule(
         score = (0.35 * prem_score) + (0.30 * qrs_score) + (0.20 * morph_score) + (0.15 * p_score)
         candidate = score > 0.50
     else:
-        # Default to standard logic if not weighted
-        candidate = cond_prem and wide_or_abnormal
+        if detection_rule == "and":
+            # Any two of the four indicators
+            score_count = sum([cond_prem, cond_wide, cond_morph, cond_pause])
+            candidate = score_count >= 2
+        elif detection_rule == "or":
+            candidate = cond_prem or wide_or_abnormal or cond_pause
         score = 1.0 if candidate else 0.0
 
     return int(candidate), score
@@ -249,6 +287,9 @@ def extract_extrasystole_features(
             if refine_frac > 0 and it < max_iters - 1:
                 thresh = np.percentile(corrs, 100.0 * refine_frac)
                 aligned_segments = [s for k, s in zip(corrs >= thresh, new_aligned) if k]
+                if len(aligned_segments) == 0:
+                    aligned_segments = new_aligned
+                    break
             else:
                 aligned_segments = new_aligned
                 break
@@ -291,6 +332,12 @@ def extract_extrasystole_features(
             width_thr=1.15,
             morph_sim_thr=0.85,
             pause_index=pause_index,
+            rr_prev_s=curr_rr,
+            rr_next_s=curr_next_rr,
+            rr_baseline_s=local_rr_baseline,
+            aa_ratio=aa_ratios[i],
+            morph_index=morph_index,
+            qrs_width_ms=qrs_widths[i],
         )
 
         features.append({
@@ -402,8 +449,8 @@ def parse_args():
     parser.add_argument("--prematurity-threshold", type=float, default=0.80, help="Prematurity index threshold")
     parser.add_argument("--qrs-width-threshold-ms", type=float, default=110.0, help="Wide QRS threshold in ms")
     parser.add_argument("--refractory", type=float, default=0.3, help="Refractory period after an accepted QRS in seconds")
-    parser.add_argument("--detection-rule", choices=["and", "or", "weighted"], default="and",
-                        help="PVC detection rule: 'and' (both premature AND wide, strict), 'or' (either premature OR wide, loose), 'weighted' (probabilistic)")
+    parser.add_argument("--detection-rule", choices=["and", "or", "weighted", "mlp"], default="and",
+                        help="PVC detection rule: 'and' (strict), 'or' (loose), 'weighted' (heuristic score), 'mlp' (trained neural baseline)")
     return parser.parse_args()
 
 

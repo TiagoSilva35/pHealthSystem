@@ -1,2 +1,2 @@
 record,reference_pvc_beats,detected_pvc_candidates,TP_pvc,FP_pvc,FN_pvc,TN_pvc,Sensitivity_pvc_percent,Specificity_pvc_percent,Accuracy_pvc_percent,PPV_pvc_percent,F1_pvc_percent,sampling_rate_hz,duration_s
-106,520,480,458,0,62,1507,88.07692307692308,100.0,96.94129255056734,100.0,93.66053169734151,360.0,1805.5527777777777
+106,520,518,495,0,25,1507,95.1923076923077,100.0,98.76665022200297,100.0,97.53694581280789,360.0,1805.5527777777777

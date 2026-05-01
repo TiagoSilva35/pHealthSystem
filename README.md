@@ -45,6 +45,47 @@ python -m src.main
 - `bitalino_signals.csv`: timestamp + todos os canais analógicos selecionados.
 - `ecg_samples.csv`: timestamp + canal ECG (quando `ECG_ANALOG_CHANNEL` estiver nos canais escolhidos).
 
+## Pipeline para avaliar `ecg_samples.csv`
+
+Para correr o fluxo completo (limpeza + deteção de batimentos/extrasístoles + gráficos):
+
+```zsh
+python src/run_ecg_csv_pipeline.py --input ecg_samples.csv --output-dir ecg_pipeline_results
+```
+
+Também pode usar diretamente o `run_mitdb.py` com chamada opcional para CSV local:
+
+```zsh
+python src/run_mitdb.py --ecg-csv ecg_samples.csv --output ecg_pipeline_results
+```
+
+Saídas principais:
+
+- `ecg_pipeline_results/extrasystole_peak_times.png`: gráfico final com batimentos e candidatos a extrasístole.
+- `ecg_pipeline_results/pvc_features_dashboard.png`: dashboard com RR, largura QRS e candidatos.
+- `ecg_pipeline_results/pvc_features.csv`: tabela de batimentos e features por batimento.
+- `ecg_pipeline_results/ecg_pipeline_summary.csv`: resumo global (beats detetados e extrasístoles candidatas).
+
+## Baseline MLP para PVC (MIT-BIH)
+
+Gerar dataset supervisionado (features por batimento + labels a partir de matching com anotações):
+
+```zsh
+python src/collect_mlp_dataset.py --database mitdb --output mlp_pvc_dataset.npz
+```
+
+Treinar MLP e guardar pesos + parâmetros de normalização:
+
+```zsh
+python src/train_mlp_pvc.py --dataset mlp_pvc_dataset.npz --model-output mlp_pvc_model.pt --scaler-output mlp_scaler_params.npz
+```
+
+Avaliacao com rede neural integrada no pipeline:
+
+```zsh
+python src/run_mitdb.py --database mitdb --evaluation-mode pvc --detection-rule mlp --output mitdb_results_mlp
+```
+
 ## Testes
 
 ```zsh
