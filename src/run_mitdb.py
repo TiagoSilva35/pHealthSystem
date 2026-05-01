@@ -315,10 +315,8 @@ def evaluate_record(
     # for PVC‑reference mode we could skip the detector, but we keep it for consistency)
     features = extract_extrasystole_features(
         times, clean_signal,
-        sampling_rate=sampling_rate,
+        sampling_rate,
         min_peak_distance_s=min_peak_distance_s,
-        prematurity_threshold=prematurity_threshold,
-        qrs_width_threshold_ms=qrs_width_threshold_ms,
         refractory_s=refractory_s,
         detection_rule=detection_rule,
     )
@@ -481,14 +479,14 @@ def parse_args():
     parser.add_argument("--show", action="store_true", help="Display plots interactively")
     parser.add_argument("--min-peak-distance", type=float, default=0.06)
     parser.add_argument("--refractory", type=float, default=0.12)
-    parser.add_argument("--prematurity-threshold", type=float, default=0.95)
-    parser.add_argument("--qrs-width-threshold-ms", type=float, default=95.0)
+    parser.add_argument("--prematurity-threshold", type=float, default=0.85)
+    parser.add_argument("--qrs-width-threshold-ms", type=float, default=120.0)
     parser.add_argument("--tolerance-ms", type=float, default=50.0)
     parser.add_argument("--evaluation-mode", choices=["beats", "pvc"], default="beats",
                         help="Evaluation mode: 'beats' (QRS detection) or 'pvc' (PVC detection)")
     parser.add_argument("--pvc-eval-ref", action="store_true",
                         help="If set, evaluate PVC rule directly on reference beats (ignoring detector). Only used when --evaluation-mode=pvc")
-    parser.add_argument("--detection-rule", choices=["and", "or", "weighted"], default="weighted",
+    parser.add_argument("--detection-rule", choices=["and", "or", "weighted"], default="and",
                         help="PVC detection rule: 'and' (strict: both premature AND wide), 'or' (loose: either), 'weighted' (probabilistic with continuous evidence accumulation)")
     return parser.parse_args()
 

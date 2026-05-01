@@ -71,7 +71,68 @@ def detect_r_peaks(ecg, sampling_rate, min_peak_distance_s=0.25, prominence_fact
     return np.asarray(result.get("r_peaks", []), dtype=int)
 
 
+def extract_beat_windows(ecg, peaks, sampling_rate, pre_s=0.20, post_s=0.40):
+    """Cut fixed windows around each R-peak for morphology comparison."""
+    pre = int(pre_s * sampling_rate)
+    post = int(post_s * sampling_rate)
 
+    valid_peaks = []
+    windows = []
+    for peak in peaks:
+        start = peak - pre
+        end = peak + post
+        if start < 0 or end >= ecg.size:
+            continue
+        valid_peaks.append(int(peak))
+        windows.append(ecg[start:end])
+
+    if not windows:
+        return np.empty((0,), dtype=int), np.empty((0, pre + post), dtype=float)
+
+    return np.asarray(valid_peaks, dtype=int), np.vstack(windows)
+
+
+def compute_local_shape_features(ecg, peak_idx, sampling_rate, window_s=0.08):
+    """
+    Computes morphology descriptors including QRS width (ms) in addition
+    to the Area‑to‑Amplitude ratio.
+    """
+    half = int(window_s * sampling_rate)
+    start = max(0, peak_idx - half)
+    end = min(ecg.size - 1, peak_idx + half)
+    local = ecg[start : end + 1]
+
+    if local.size < 3:
+        return 0.0, 0.0, 0.0, np.nan
+
+    # Peak-to-peak amplitude
+    peak_to_peak = float(np.max(local) - np.min(local))
+
+    # Area (Integral of absolute centred signal)
+    centred = local - np.median(local)
+    qrs_area = float(np.sum(np.abs(centred)) / sampling_rate)
+
+    # Area-to-Amplitude Ratio
+    aa_ratio = qrs_area / (peak_to_peak + 1e-9)
+
+    # True QRS width (ms) – uses the existing reliable estimator
+    qrs_width = estimate_qrs_width_ms(ecg, peak_idx, sampling_rate)
+
+    return peak_to_peak, qrs_area, aa_ratio, qrs_width
+
+
+def robust_baseline(values):
+    """
+    Robust central tendency: median of the values between the 25th and 75th percentile.
+    This ignores frequent outliers (e.g. PVCs) that would otherwise corrupt a simple median.
+    """
+    if len(values) < 2:
+        return np.nan
+    q1, q3 = np.percentile(values, [25, 75])
+    central = values[(values >= q1) & (values <= q3)]
+    if central.size == 0:
+        return np.median(values)
+    return np.median(central)
 
 
 def compute_pvc_rule(
@@ -132,8 +193,8 @@ def compute_pvc_rule(
         score = 0.55 * prem_score + 0.30 * qrs_score + 0.15 * morph_score
         candidate = score > 0.50
     else:
-        raise ValueError(f"Unknown detection_rule: {detection_rule}")
-    
+        raise ValueError(f"Unknown detection rule: {detection_rule}")
+
     return int(candidate), score
 
 
@@ -143,10 +204,9 @@ def extract_extrasystole_features(
     sampling_rate,
     min_peak_distance_s=0.25,
     prominence_factor=1.0,
-    prematurity_threshold=0.80,
-    qrs_width_threshold_ms=130.0,
     refractory_s=0.30,
-    detection_rule="and",
+    detection_rule="weighted",
+    window_size=20
 ):
     """Build per-beat PVC-focused features and a simple candidate flag.
 
@@ -169,16 +229,23 @@ def extract_extrasystole_features(
     if peaks.size < 3:
         return []
 
-    rr_prev = np.full(peaks.size, np.nan, dtype=float)
-    rr_next = np.full(peaks.size, np.nan, dtype=float)
-
     peak_times = times[peaks]
-    rr_values = np.diff(peak_times)
-    rr_prev[1:] = rr_values
-    rr_next[:-1] = rr_values
+    n_beats = len(peaks)
+    rr_values = np.diff(peak_times)  # length n_beats-1
 
-    # Baseline RR approximates the patient's local "normal" cycle length.
-    rr_baseline = float(np.median(rr_values)) if rr_values.size else np.nan
+    # 2. Pre‑compute morphology for every beat
+    aa_ratios = np.zeros(n_beats)
+    qrs_widths = np.full(n_beats, np.nan)
+    for i, p in enumerate(peaks):
+        _, _, aa_ratio_i, qrs_w = compute_local_shape_features(ecg_cleaned, p, sampling_rate)
+        aa_ratios[i] = aa_ratio_i
+        qrs_widths[i] = qrs_w
+
+
+    global_rr_baseline = robust_baseline(rr_values)
+    global_aa_baseline = robust_baseline(aa_ratios)
+    global_width_baseline = robust_baseline(qrs_widths[~np.isnan(qrs_widths)])
+
     # Compute per-beat QRS morphology similarity to a median template built from the same signal.
     # Use iterative template refinement and small-shift alignment to make the template robust
     # against outliers and minor alignment errors.
@@ -282,15 +349,21 @@ def extract_extrasystole_features(
             morph_scores[seg_idx] = float((best_corr + 1.0) / 2.0) if best_corr is not None else np.nan
 
     features = []
-    for i, peak in enumerate(peaks):
-        peak_time = float(times[peak])
-        rr_p = float(rr_prev[i]) if np.isfinite(rr_prev[i]) else np.nan
-        rr_n = float(rr_next[i]) if np.isfinite(rr_next[i]) else np.nan
+    for i in range(n_beats):
+        # Current RR (preceding beat)
+        curr_rr = rr_values[i - 1] if i > 0 else np.nan
+        # Compensatory pause: RR to next beat
+        curr_next_rr = rr_values[i] if i < n_beats - 1 else np.nan
+        curr_aa = aa_ratios[i]
+        curr_width = qrs_widths[i]
 
-        prematurity_index = rr_p / rr_baseline if np.isfinite(rr_p) and rr_baseline > 0 else np.nan
-        qrs_width_ms = estimate_qrs_width_ms(ecg_cleaned, int(peak), sampling_rate)
+        # Indices relative to global robust baseline
+        prem_index = curr_rr / global_rr_baseline if not np.isnan(curr_rr) and global_rr_baseline > 0 else np.nan
+        morph_index = curr_aa / (global_aa_baseline + 1e-9)
+        width_index = curr_width / (global_width_baseline + 1e-9) if not np.isnan(curr_width) and global_width_baseline > 0 else np.nan
+        pause_index = curr_next_rr / global_rr_baseline if not np.isnan(curr_next_rr) and global_rr_baseline > 0 else np.nan
 
-        # Apply PVC detection rule
+        # Vote using the chosen rule
         is_candidate, pvc_score = compute_pvc_rule(
             prematurity_index,
             qrs_width_ms,
@@ -303,20 +376,22 @@ def extract_extrasystole_features(
         features.append(
             {
                 "beat_index": i,
-                "peak_time_s": peak_time,
-                "rr_prev_s": rr_p,
-                "rr_next_s": rr_n,
-                "rr_baseline_s": rr_baseline,
-                "prematurity_index": prematurity_index,
-                "qrs_width_ms": qrs_width_ms,
+                "peak_time_s": float(times[peaks[i]]),
+                "rr_prev_s": float(curr_rr) if not np.isnan(curr_rr) else None,
+                "rr_next_s": float(curr_next_rr) if not np.isnan(curr_next_rr) else None,
+                "rr_baseline_s": global_rr_baseline,
+                "prematurity_index": prem_index,
+                "aa_ratio": curr_aa,
+                "morph_index": morph_index,
+                "qrs_width_ms": float(curr_width) if not np.isnan(curr_width) else None,
+                "width_index": width_index,
+                "pause_index": pause_index,
                 "pvc_score": pvc_score,
                 "morphology_score": (float(morph_scores[i]) if np.isfinite(morph_scores[i]) else np.nan),
                 "is_pvc_candidate": is_candidate,
             }
         )
-
     return features
-
 
 def save_features_csv(features, output_csv):
     """Persist extracted beat features to a CSV table."""
