@@ -311,6 +311,9 @@ def evaluate_record(
     detection_rule="weighted",
     pvc_eval_ref=False,   # new flag: if True, evaluate PVC on all reference beats
 ):
+    # record_name = record_path.stem
+    # if record_name != "207":
+    #     return None, None, None, None  # skip all but record 207 for now (for quick testing)
     times, signal, sampling_rate = load_physiobank_record(record_path)
     # plot_signals(signal, sampling_rate)
     preprocessed = preprocess_ecg_for_arrhythmia(signal, sampling_rate, notch_hz=60.0)
@@ -397,6 +400,18 @@ def batch_process_database(
     summaries = []
     for record_name in records:
         record_path = db_path / record_name
+        
+        # For PVC evaluation, skip records with < 10 reference PVC beats
+        if evaluation_mode == "pvc":
+            try:
+                _, _, pvc_labels = load_reference_beats(record_path)
+                if int(np.sum(pvc_labels)) < 10:
+                    print(f"[SKIP] {record_name} (only {int(np.sum(pvc_labels))} reference PVCs)")
+                    continue
+            except Exception as e:
+                print(f"[SKIP] {record_name} (failed to load reference: {e})")
+                continue
+        
         try:
             print(f"[PROC] {record_name} ...", end=" ", flush=True)
             summary, features, times, signal = evaluate_record(
