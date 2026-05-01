@@ -22,6 +22,7 @@ import pandas as pd
 import wfdb
 
 from src.extract_features import extract_extrasystole_features, save_peak_time_plot
+from src.helpers.plot_signals import plot_signals
 from src.helpers.signal_processing import (
     estimate_qrs_width_ms,
     preprocess_ecg_for_arrhythmia,
@@ -258,10 +259,15 @@ def aggregate_beat_metrics(summaries):
 
 def aggregate_pvc_metrics(summaries):
     """Given list of PVC‑detection summary dicts, add a GLOBAL row and return DataFrame."""
-    df = pd.DataFrame(summaries)
-    ok = df.dropna(subset=["TP_pvc", "FP_pvc", "FN_pvc", "TN_pvc"]).copy()
-    if ok.empty:
-        return df
+    # Filter out error records (those with only "record" and "error" keys)
+    valid_summaries = [s for s in summaries if "TP_pvc" in s]
+    df = pd.DataFrame(valid_summaries) if valid_summaries else pd.DataFrame()
+    
+    if df.empty:
+        # Return all summaries if no valid ones (preserve error records for visibility)
+        return pd.DataFrame(summaries)
+    
+    ok = df.copy()
     total_tp = int(ok["TP_pvc"].sum())
     total_fp = int(ok["FP_pvc"].sum())
     total_fn = int(ok["FN_pvc"].sum())
@@ -306,8 +312,10 @@ def evaluate_record(
     pvc_eval_ref=False,   # new flag: if True, evaluate PVC on all reference beats
 ):
     times, signal, sampling_rate = load_physiobank_record(record_path)
+    # plot_signals(signal, sampling_rate)
     preprocessed = preprocess_ecg_for_arrhythmia(signal, sampling_rate, notch_hz=60.0)
     clean_signal = preprocessed["cleaned"]
+    # plot_signals(clean_signal, sampling_rate)
 
     ref_samples, ref_symbols, pvc_labels = load_reference_beats(record_path)
 

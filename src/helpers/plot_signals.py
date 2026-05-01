@@ -13,17 +13,31 @@ CHANNELS_TO_SENSORS = {
 }
 
 
-def plot_signals(signals, sampling_rate, start_idx=0):
-
-    time = np.arange(signals.shape[0]) / sampling_rate
-    plt.figure(figsize=(12, 6))
-    for i in range(start_idx, signals.shape[1]):
-        plt.plot(time, signals[:, i], label=f'Channel {i}')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Signal Value')
-    plt.title('Bitalino Signals')
-    plt.legend()
-    plt.grid()
+def plot_signals(signals, sampling_rate, duration_sec=30):
+    # Handle both 1D (single channel) and 2D (multi-channel) arrays
+    if signals.ndim == 1:
+        num_samples = int(duration_sec * sampling_rate)
+        signals_subset = signals[:num_samples]
+        time = np.arange(signals_subset.shape[0]) / sampling_rate
+        plt.figure(figsize=(12, 6))
+        plt.plot(time, signals_subset)
+        plt.xlabel('Time (s)')
+        plt.ylabel('Signal Value')
+        plt.title(f'Signal (First {duration_sec}s)')
+        plt.grid(True)
+        plt.show()
+    else:
+        num_samples = int(duration_sec * sampling_rate)
+        signals_subset = signals[:num_samples]
+        time = np.arange(signals_subset.shape[0]) / sampling_rate
+        plt.figure(figsize=(12, 6))
+        plt.plot(time, signals_subset)
+        plt.xlabel('Time (s)')
+        plt.ylabel('Signal Value')
+        plt.title(f'Bitalino Signals (First {duration_sec}s)')
+        plt.grid(True)
+        plt.show()
+    # plt.legend() # Only use if your signals array has headers/labels
     plt.show()
 
 

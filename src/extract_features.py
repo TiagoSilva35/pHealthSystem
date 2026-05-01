@@ -1,13 +1,9 @@
 import argparse
 import csv
-import importlib.util
-import sys
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy.signal import find_peaks
 
 from src.helpers.signal_processing import estimate_qrs_width_ms
 from src.algorithms.pan_thompkins import PanThompkinsQRS
@@ -115,8 +111,8 @@ def compute_local_shape_features(ecg, peak_idx, sampling_rate, window_s=0.08):
     # Area-to-Amplitude Ratio
     aa_ratio = qrs_area / (peak_to_peak + 1e-9)
 
-    # True QRS width (ms) – uses the existing reliable estimator
-    qrs_width = estimate_qrs_width_ms(ecg, peak_idx, sampling_rate)
+    qrs_width = estimate_qrs_width_ms(ecg, peak_idx, sampling_rate, 
+                                  search_half_window_s=0.25, threshold_fraction=0.15)
 
     return peak_to_peak, qrs_area, aa_ratio, qrs_width
 
@@ -136,64 +132,50 @@ def robust_baseline(values):
 
 
 def compute_pvc_rule(
-    prematurity_index,
-    qrs_width_ms,
+    prem_index,
+    width_index,
     morphology_score=None,
-    prematurity_threshold=0.80,
-    qrs_width_threshold_ms=130.0,
     detection_rule="and",
-    morph_threshold=0.30,
+    prem_thr=0.92,
+    width_thr=1.15,
+    morph_sim_thr=0.85,
+    pause_index=None,
+    pause_thr=1.2,
 ):
-    """Apply PVC detection rule and return (candidate_flag, score).
-    
-    Supported rules:
-      - "and": beat is BOTH premature AND wide (strict, original logic)
-      - "or":  beat is premature OR wide (looser, catches more)
-    - "weighted": probabilistic scoring (0.0 to 1.0) with continuous evidence accumulation
     """
-    cond_premature = np.isfinite(prematurity_index) and prematurity_index < prematurity_threshold
-    cond_wide = np.isfinite(qrs_width_ms) and qrs_width_ms > qrs_width_threshold_ms
-    cond_morph = False
-    morph_evidence_score = 0.0
-    if morphology_score is not None and np.isfinite(morphology_score):
-        # morphology_score is similarity to a median-normal QRS (1.0 identical, 0.0 opposite)
-        morph_evidence_score = float(1.0 - float(morphology_score))
-        cond_morph = morph_evidence_score > float(morph_threshold)
-    
-    if detection_rule == "and":
-        # Strict: must match both primary conditions. If morphology is available, include it in the
-        # aggregated score but keep strict candidate logic based on prematurity+width.
-        candidate = bool(cond_premature and cond_wide)
-        denom = 2.0 + (1.0 if (morphology_score is not None and np.isfinite(morphology_score)) else 0.0)
-        score = float((float(cond_premature) + float(cond_wide) + (float(cond_morph) if denom > 2.0 else 0.0)) / denom)
+    PVC detection using relative prematurity, relative QRS width, and
+    optional morphology similarity (0-1, 1=most normal).
+    """
+    cond_prem = np.isfinite(prem_index) and prem_index < prem_thr
+    cond_wide = np.isfinite(width_index) and width_index > width_thr
+    cond_morph = (
+        morphology_score is not None 
+        and np.isfinite(morphology_score) 
+        and morphology_score < morph_sim_thr
+    )
+    cond_pause = (
+        pause_index is not None 
+        and np.isfinite(pause_index) 
+        and pause_index > pause_thr
+    ) if pause_index is not None else False
+
+    # Combine width and morphology: beat is “wide” in the physiological sense
+    wide_or_abnormal = cond_wide or cond_morph
+
+    if detection_rule == "strict":
+        candidate = cond_prem and wide_or_abnormal and cond_pause
+        score = 1.0 if candidate else 0.0
+    elif detection_rule == "and":
+        candidate = cond_prem and wide_or_abnormal
+        score = 1.0 if candidate else 0.0
     elif detection_rule == "or":
-        # Loose: match either primary condition. Average available evidence for score.
-        candidate = bool(cond_premature or cond_wide)
-        denom = 2.0 + (1.0 if (morphology_score is not None and np.isfinite(morphology_score)) else 0.0)
-        score = float((float(cond_premature) + float(cond_wide) + (float(cond_morph) if denom > 2.0 else 0.0)) / denom)
+        candidate = cond_prem or wide_or_abnormal
+        score = (float(cond_prem) + float(wide_or_abnormal)) / 2.0
     elif detection_rule == "weighted":
-        # Continuous evidence accumulation across prematurity, width and morphology-evidence.
-        prem_scale = max(0.05, 0.15 * prematurity_threshold)
-        qrs_scale = max(5.0, 0.30 * qrs_width_threshold_ms)
-
-        prem_score = 0.0
-        if np.isfinite(prematurity_index):
-            prem_score = 1.0 / (1.0 + np.exp((prematurity_index - prematurity_threshold) / prem_scale))
-
-        qrs_score = 0.0
-        if np.isfinite(qrs_width_ms):
-            qrs_score = 1.0 / (1.0 + np.exp(-(qrs_width_ms - qrs_width_threshold_ms) / qrs_scale))
-
-        # morphology contributes as "evidence of abnormal morphology" = 1 - similarity
-        morph_score = 0.0
-        if morphology_score is not None and np.isfinite(morphology_score):
-            morph_score = morph_evidence_score
-
-        # weights chosen to prioritise prematurity, then width, then morphology
-        score = 0.55 * prem_score + 0.30 * qrs_score + 0.15 * morph_score
-        candidate = score > 0.50
+        score = 0.5 * float(cond_prem) + 0.3 * float(cond_wide) + 0.2 * float(cond_morph)
+        candidate = score > 0.5
     else:
-        raise ValueError(f"Unknown detection rule: {detection_rule}")
+        raise ValueError(f"Unknown rule: {detection_rule}")
 
     return int(candidate), score
 
@@ -205,6 +187,8 @@ def extract_extrasystole_features(
     min_peak_distance_s=0.25,
     prominence_factor=1.0,
     refractory_s=0.30,
+    prematurity_threshold=0.80,
+    qrs_width_threshold_ms=110.0,
     detection_rule="weighted",
     window_size=20
 ):
@@ -365,12 +349,14 @@ def extract_extrasystole_features(
 
         # Vote using the chosen rule
         is_candidate, pvc_score = compute_pvc_rule(
-            prematurity_index,
-            qrs_width_ms,
-            morphology_score=(float(morph_scores[i]) if np.isfinite(morph_scores[i]) else None),
-            prematurity_threshold=prematurity_threshold,
-            qrs_width_threshold_ms=qrs_width_threshold_ms,
+            prem_index=prem_index,
+            width_index=width_index,
+            morphology_score=morph_scores[i],
             detection_rule=detection_rule,
+            prem_thr=prematurity_threshold,      # now from CLI, default 0.92
+            width_thr=1.15,                      # can be added to CLI
+            morph_sim_thr=0.85,
+            pause_index=pause_index,
         )
 
         features.append(
