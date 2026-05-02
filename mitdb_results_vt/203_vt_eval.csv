@@ -1,0 +1,2 @@
+record,reference_vt_beats,detected_vt_candidates,reference_vt_episodes,detected_vt_episodes,reference_beats,detected_beats,TP_vt,FP_vt,FN_vt,TN_vt,Sensitivity_vt_percent,Specificity_vt_percent,Accuracy_vt_percent,PPV_vt_percent,F1_vt_percent,sampling_rate_hz,duration_s
+203,79,78,21,22,2977,2982,66,11,13,2887,83.54430379746836,99.62042788129745,99.19381928115553,85.71428571428571,84.61538461538461,360.0,1805.5527777777777

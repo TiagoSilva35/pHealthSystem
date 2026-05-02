@@ -186,10 +186,12 @@ def compute_pvc_rule(
         score = (0.35 * prem_score) + (0.30 * qrs_score) + (0.20 * morph_score) + (0.15 * p_score)
         candidate = score > 0.50
     else:
-        if detection_rule == "and":
+        if detection_rule == "2of4":
             # Any two of the four indicators
             score_count = sum([cond_prem, cond_wide, cond_morph, cond_pause])
             candidate = score_count >= 2
+        elif detection_rule == "and":
+            candidate = cond_prem and cond_wide
         elif detection_rule == "or":
             candidate = cond_prem or wide_or_abnormal or cond_pause
         score = 1.0 if candidate else 0.0

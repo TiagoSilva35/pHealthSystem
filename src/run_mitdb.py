@@ -11,6 +11,9 @@ Examples:
 
   # PVC detection performance on all reference beats (ignoring detector)
   python src/run_mitdb.py --database mitdb --evaluation-mode pvc --pvc-eval-ref
+
+  # VT rhythm detection performance against MIT-BIH rhythm references
+  python src/run_mitdb.py --database mitdb --evaluation-mode vt
 """
 
 import argparse
@@ -32,6 +35,7 @@ from src.helpers.signal_processing import (
 )
 
 VT_BURDEN_THRESHOLD_PERCENT = 10.0
+VT_RHYTHM_NOTES = {"(VT"}
 
 # ----------------------------------------------------------------------
 # Constants
@@ -66,7 +70,47 @@ def load_reference_beats(record_path: Path):
         ref_samples.append(int(sample))
         ref_symbols.append(symbol)
         pvc_labels.append(1 if symbol in PVC_ANNOTATION_SYMBOLS else 0)
-    return np.asarray(ref_samples, dtype=int), ref_symbols, np.asarray(pvc_labels, dtype=int)
+    ref_samples = np.asarray(ref_samples, dtype=int)
+    vt_labels = build_reference_vt_labels(ann, ref_samples)
+    return ref_samples, ref_symbols, np.asarray(pvc_labels, dtype=int), vt_labels
+
+
+def normalize_aux_note(note):
+    if not note:
+        return ""
+    if isinstance(note, bytes):
+        text = note.decode("latin1", "ignore")
+    else:
+        text = str(note)
+    return text.replace("\x00", "").strip()
+
+
+def build_reference_vt_labels(annotation, beat_samples):
+    beat_samples = np.asarray(beat_samples, dtype=int)
+    if beat_samples.size == 0:
+        return np.asarray([], dtype=int)
+
+    rhythm_changes = []
+    rhythm_states = []
+    for sample, symbol, aux_note in zip(annotation.sample, annotation.symbol, annotation.aux_note):
+        if symbol != "+":
+            continue
+        note = normalize_aux_note(aux_note)
+        if not note:
+            continue
+        rhythm_changes.append(int(sample))
+        rhythm_states.append(note in VT_RHYTHM_NOTES)
+
+    if not rhythm_changes:
+        return np.zeros(beat_samples.size, dtype=int)
+
+    rhythm_changes = np.asarray(rhythm_changes, dtype=int)
+    rhythm_states = np.asarray(rhythm_states, dtype=bool)
+    state_idx = np.searchsorted(rhythm_changes, beat_samples, side="right") - 1
+    active = np.zeros(beat_samples.size, dtype=bool)
+    valid = state_idx >= 0
+    active[valid] = rhythm_states[state_idx[valid]]
+    return active.astype(int)
 
 def match_detections_to_references(ref_samples, det_samples, tol_samples):
     """Greedy matching, returns tp, fp, fn, signed_errors, matched_ref_idx (index or -1)."""
@@ -270,6 +314,135 @@ def compute_pvc_detection_metrics_reference(
         "duration_s": duration_s,
     }
 
+
+def count_positive_runs(binary_labels):
+    labels = np.asarray(binary_labels, dtype=int)
+    if labels.size == 0:
+        return 0
+    starts = np.where((labels == 1) & (np.r_[0, labels[:-1]] == 0))[0]
+    return int(starts.size)
+
+
+def detect_vt_candidates(
+    detected_samples,
+    is_pvc_pred,
+    sampling_rate,
+    min_consecutive_beats=3,
+    max_rr_s=0.60,
+    max_gap_beats=0,   
+):
+    detected_samples = np.asarray(detected_samples, dtype=int)
+    is_pvc_pred = np.asarray(is_pvc_pred, dtype=int)
+    n = detected_samples.size
+    if n == 0:
+        return np.asarray([], dtype=int)
+
+    vt_pred = np.zeros(n, dtype=int)
+    if n < min_consecutive_beats:
+        return vt_pred
+
+    rr = np.diff(detected_samples) / float(sampling_rate)
+
+    # 1st pass: strict runs of consecutive PVCs with RR ≤ max_rr_s
+    runs = []          # list of (start_idx, end_idx)
+    i = 0
+    while i < n:
+        if is_pvc_pred[i] != 1:
+            i += 1
+            continue
+        j = i
+        while (j + 1 < n and is_pvc_pred[j + 1] == 1
+               and np.isfinite(rr[j]) and rr[j] <= max_rr_s):
+            j += 1
+        if j - i + 1 >= min_consecutive_beats:
+            runs.append((i, j))
+        i = j + 1
+
+    # Gap merging (single pass, left to right)
+    if max_gap_beats > 0 and len(runs) > 1:
+        merged_runs = []
+        prev_start, prev_end = runs[0]
+        for start, end in runs[1:]:
+            gap_size = start - prev_end - 1   # number of beats between the two runs
+            if gap_size <= max_gap_beats:
+                # Check that the RRs across the gap satisfy rate criterion
+                # We need the RR from prev_end to prev_end+1 (first gap beat)
+                # and the RR from the last gap beat to start (i.e., start-1 to start)
+                # All those indices must exist.
+                valid = True
+                # check RR from prev_end to next beat (first gap beat)
+                if prev_end < n - 1 and np.isfinite(rr[prev_end]) and rr[prev_end] > max_rr_s:
+                    valid = False
+                # check RR from each gap beat to its next
+                for k in range(prev_end + 1, start):
+                    if k < n - 1 and np.isfinite(rr[k]) and rr[k] > max_rr_s:
+                        valid = False
+                # check RR from last gap beat (start-1) to start (which is covered by rr[start-1])
+                if start > 0 and np.isfinite(rr[start-1]) and rr[start-1] > max_rr_s:
+                    valid = False
+                if valid:
+                    # Merge: extend prev_end to end
+                    prev_end = end
+                    continue
+            # can't merge, push previous run and start new
+            merged_runs.append((prev_start, prev_end))
+            prev_start, prev_end = start, end
+        merged_runs.append((prev_start, prev_end))
+        runs = merged_runs
+
+    # Apply runs to vt_pred
+    for start, end in runs:
+        vt_pred[start : end + 1] = 1
+
+    return vt_pred
+
+
+def compute_vt_detection_metrics_matched(
+    record_name,
+    is_vt_pred,
+    matched_ref_idx,
+    vt_labels,
+    ref_count,
+    det_count,
+    sampling_rate,
+    duration_s,
+):
+    matched_mask = matched_ref_idx != -1
+    pred_matched = is_vt_pred[matched_mask]
+    true_matched = vt_labels[matched_ref_idx[matched_mask]]
+
+    tp = int(np.sum((pred_matched == 1) & (true_matched == 1)))
+    fp = int(np.sum((pred_matched == 1) & (true_matched == 0)))
+    fn = int(np.sum(vt_labels) - tp)
+    tn = int((len(vt_labels) - int(np.sum(vt_labels))) - fp)
+
+    sens = 100.0 * tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    spec = 100.0 * tn / (tn + fp) if (tn + fp) > 0 else 0.0
+    acc = 100.0 * (tp + tn) / (tp + fp + fn + tn) if (tp + fp + fn + tn) > 0 else 0.0
+    ppv = 100.0 * tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    f1 = 2.0 * tp / (2 * tp + fp + fn) * 100.0 if (2 * tp + fp + fn) > 0 else 0.0
+
+    return {
+        "record": record_name,
+        "reference_vt_beats": int(np.sum(vt_labels)),
+        "detected_vt_candidates": int(np.sum(is_vt_pred)),
+        "reference_vt_episodes": count_positive_runs(vt_labels),
+        "detected_vt_episodes": count_positive_runs(is_vt_pred),
+        "reference_beats": int(ref_count),
+        "detected_beats": int(det_count),
+        "TP_vt": tp,
+        "FP_vt": fp,
+        "FN_vt": fn,
+        "TN_vt": tn,
+        "Sensitivity_vt_percent": sens,
+        "Specificity_vt_percent": spec,
+        "Accuracy_vt_percent": acc,
+        "PPV_vt_percent": ppv,
+        "F1_vt_percent": f1,
+        "sampling_rate_hz": sampling_rate,
+        "duration_s": duration_s,
+    }
+
 # ----------------------------------------------------------------------
 # Global aggregation helpers
 # ----------------------------------------------------------------------
@@ -362,6 +535,51 @@ def aggregate_pvc_metrics(summaries):
         "detected_pvc_burden_percent": global_detected_burden["pvc_burden_percent"],
         "detected_pvc_rate_per_hour": global_detected_burden["pvc_rate_per_hour"],
         "detected_possible_vt": global_detected_burden["possible_vt_from_burden"],
+        "sampling_rate_hz": "",
+        "duration_s": total_duration_s,
+    }
+    return pd.concat([df, pd.DataFrame([global_row])], ignore_index=True)
+
+
+def aggregate_vt_metrics(summaries):
+    valid_summaries = [s for s in summaries if "TP_vt" in s]
+    df = pd.DataFrame(valid_summaries) if valid_summaries else pd.DataFrame()
+
+    if df.empty:
+        return pd.DataFrame(summaries)
+
+    ok = df.copy()
+    total_tp = int(ok["TP_vt"].sum())
+    total_fp = int(ok["FP_vt"].sum())
+    total_fn = int(ok["FN_vt"].sum())
+    total_tn = int(ok["TN_vt"].sum())
+    total_reference_beats = int(ok["reference_beats"].sum())
+    total_detected_beats = int(ok["detected_beats"].sum())
+    total_duration_s = float(ok["duration_s"].sum())
+
+    global_sens = 100.0 * total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+    global_spec = 100.0 * total_tn / (total_tn + total_fp) if (total_tn + total_fp) > 0 else 0.0
+    global_acc = 100.0 * (total_tp + total_tn) / (total_tp + total_fp + total_fn + total_tn) if (total_tp + total_fp + total_fn + total_tn) > 0 else 0.0
+    global_ppv = 100.0 * total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+    global_f1 = 2.0 * total_tp / (2 * total_tp + total_fp + total_fn) * 100.0 if (2 * total_tp + total_fp + total_fn) > 0 else 0.0
+
+    global_row = {
+        "record": "GLOBAL",
+        "reference_vt_beats": int(ok["reference_vt_beats"].sum()),
+        "detected_vt_candidates": int(ok["detected_vt_candidates"].sum()),
+        "reference_vt_episodes": int(ok["reference_vt_episodes"].sum()),
+        "detected_vt_episodes": int(ok["detected_vt_episodes"].sum()),
+        "reference_beats": total_reference_beats,
+        "detected_beats": total_detected_beats,
+        "TP_vt": total_tp,
+        "FP_vt": total_fp,
+        "FN_vt": total_fn,
+        "TN_vt": total_tn,
+        "Sensitivity_vt_percent": global_sens,
+        "Specificity_vt_percent": global_spec,
+        "Accuracy_vt_percent": global_acc,
+        "PPV_vt_percent": global_ppv,
+        "F1_vt_percent": global_f1,
         "sampling_rate_hz": "",
         "duration_s": total_duration_s,
     }
@@ -476,6 +694,8 @@ def evaluate_record(
     evaluation_mode,
     detection_rule="weighted",
     pvc_eval_ref=False,   # new flag: if True, evaluate PVC on all reference beats
+    vt_min_consecutive_beats=3,
+    vt_max_rr_s=0.60,
 ):
     # record_name = record_path.stem
     # if record_name != "207":
@@ -486,7 +706,7 @@ def evaluate_record(
     clean_signal = preprocessed["cleaned"]
     # plot_signals(clean_signal, sampling_rate)
 
-    ref_samples, ref_symbols, pvc_labels = load_reference_beats(record_path)
+    ref_samples, ref_symbols, pvc_labels, vt_labels = load_reference_beats(record_path)
 
     # Run the detector and extract features (always needed for beat detection;
     # for PVC‑reference mode we could skip the detector, but we keep it for consistency)
@@ -501,6 +721,14 @@ def evaluate_record(
     detected_peak_times_s = np.asarray([row["peak_time_s"] for row in features], dtype=float)
     detected_samples = np.asarray(np.round(detected_peak_times_s * sampling_rate), dtype=int)
     is_pvc_pred = np.asarray([row["is_pvc_candidate"] for row in features], dtype=int)
+    is_vt_pred = detect_vt_candidates(
+        detected_samples,
+        is_pvc_pred,
+        sampling_rate,
+        min_consecutive_beats=vt_min_consecutive_beats,
+        max_rr_s=vt_max_rr_s,
+        max_gap_beats=1,
+    )
 
     tol_samples = int(round((tolerance_ms / 1000.0) * sampling_rate))
     tp_beats, fp_beats, fn_beats, signed_errors, matched_ref_idx = match_detections_to_references(
@@ -516,7 +744,7 @@ def evaluate_record(
             len(ref_samples), len(detected_samples),
             sampling_rate, duration_s,
         )
-    else:  # pvc mode
+    elif evaluation_mode == "pvc":
         if pvc_eval_ref:
             # Use reference beats directly (ignore detector)
             summary = compute_pvc_detection_metrics_reference(
@@ -533,6 +761,17 @@ def evaluate_record(
                 is_pvc_pred, matched_ref_idx, pvc_labels,
                 len(ref_samples), sampling_rate, duration_s,
             )
+    else:
+        summary = compute_vt_detection_metrics_matched(
+            record_path.name,
+            is_vt_pred,
+            matched_ref_idx,
+            vt_labels,
+            len(ref_samples),
+            len(detected_samples),
+            sampling_rate,
+            duration_s,
+        )
     return summary, features, times, clean_signal
 
 # ----------------------------------------------------------------------
@@ -552,6 +791,8 @@ def batch_process_database(
     evaluation_mode="beats",
     detection_rule="weighted",
     pvc_eval_ref=False,
+    vt_min_consecutive_beats=3,
+    vt_max_rr_s=0.60,
 ):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -567,13 +808,17 @@ def batch_process_database(
     for record_name in records:
         record_path = db_path / record_name
 
-        
-        # For PVC evaluation, skip records with < 10 reference PVC beats
-        if evaluation_mode == "pvc":
+        # For PVC evaluation, skip records with < 10 reference PVC beats.
+        # For VT evaluation, ignore records with no VT reference beats.
+        if evaluation_mode in {"pvc", "vt"}:
             try:
-                _, _, pvc_labels = load_reference_beats(record_path)
-                if int(np.sum(pvc_labels)) < 10:
-                    print(f"[SKIP] {record_name} (only {int(np.sum(pvc_labels))} reference PVCs)")
+                _, _, pvc_labels, vt_labels = load_reference_beats(record_path)
+                if evaluation_mode == "pvc":
+                    if int(np.sum(pvc_labels)) < 10:
+                        print(f"[SKIP] {record_name} (only {int(np.sum(pvc_labels))} reference PVCs)")
+                        continue
+                elif int(np.sum(vt_labels)) == 0:
+                    print(f"[SKIP] {record_name} (0 reference VT beats)")
                     continue
             except Exception as e:
                 print(f"[SKIP] {record_name} (failed to load reference: {e})")
@@ -591,6 +836,8 @@ def batch_process_database(
                 evaluation_mode=evaluation_mode,
                 detection_rule=detection_rule,
                 pvc_eval_ref=pvc_eval_ref,
+                vt_min_consecutive_beats=vt_min_consecutive_beats,
+                vt_max_rr_s=vt_max_rr_s,
             )
             summaries.append(summary)
 
@@ -599,15 +846,26 @@ def batch_process_database(
                 print(f"OK | ref={summary['reference_beats']} det={summary['detected_beats']} "
                       f"TP={summary['TP']} FP={summary['FP']} FN={summary['FN']} "
                       f"SE={summary['SE_percent']:.2f}% PPV={summary['PPV_percent']:.2f}%")
-            else:
+            elif evaluation_mode == "pvc":
                 print(f"OK | refPVC={summary['reference_pvc_beats']} cand={summary['detected_pvc_candidates']} "
                       f"TP={summary['TP_pvc']} FP={summary['FP_pvc']} FN={summary['FN_pvc']} TN={summary['TN_pvc']} "
                       f"Sens={summary['Sensitivity_pvc_percent']:.2f}% "
                       f"Spec={summary['Specificity_pvc_percent']:.2f}% "
                       f"Acc={summary['Accuracy_pvc_percent']:.2f}%")
+            else:
+                print(f"OK | refVT={summary['reference_vt_beats']} cand={summary['detected_vt_candidates']} "
+                      f"TP={summary['TP_vt']} FP={summary['FP_vt']} FN={summary['FN_vt']} TN={summary['TN_vt']} "
+                      f"Sens={summary['Sensitivity_vt_percent']:.2f}% "
+                      f"Spec={summary['Specificity_vt_percent']:.2f}% "
+                      f"Acc={summary['Accuracy_vt_percent']:.2f}%")
 
             # Save per‑record summary
-            prefix = "beat" if evaluation_mode == "beats" else "pvc"
+            if evaluation_mode == "beats":
+                prefix = "beat"
+            elif evaluation_mode == "pvc":
+                prefix = "pvc"
+            else:
+                prefix = "vt"
             suffix = "_ref" if (evaluation_mode == "pvc" and pvc_eval_ref) else ""
             csv_path = output_dir / f"{record_name}_{prefix}_eval{suffix}.csv"
             with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -633,13 +891,20 @@ def batch_process_database(
     if summaries:
         if evaluation_mode == "beats":
             summary_df = aggregate_beat_metrics(summaries)
-        else:
+        elif evaluation_mode == "pvc":
             summary_df = aggregate_pvc_metrics(summaries)
+        else:
+            summary_df = aggregate_vt_metrics(summaries)
     else:
         summary_df = pd.DataFrame()
 
     # Save global CSV
-    mode_tag = f"{evaluation_mode}" if evaluation_mode == "beats" else f"pvc{'ref' if pvc_eval_ref else ''}"
+    if evaluation_mode == "beats":
+        mode_tag = "beats"
+    elif evaluation_mode == "pvc":
+        mode_tag = f"pvc{'ref' if pvc_eval_ref else ''}"
+    else:
+        mode_tag = "vt"
     summary_csv = output_dir / f"database_summary_{mode_tag}.csv"
     summary_df.to_csv(summary_csv, index=False)
     print(f"\n[INFO] Saved summary to {summary_csv}")
@@ -650,7 +915,7 @@ def batch_process_database(
         if evaluation_mode == "beats":
             cols = ["record", "reference_beats", "detected_beats",
                     "TP", "FP", "FN", "SE_percent", "PPV_percent", "F1_percent"]
-        else:
+        elif evaluation_mode == "pvc":
             cols = ["record", "reference_beats", "detected_beats", "reference_pvc_beats", "detected_pvc_candidates",
                     "TP_pvc", "FP_pvc", "FN_pvc", "TN_pvc",
                     "Sensitivity_pvc_percent", "Specificity_pvc_percent",
@@ -658,6 +923,12 @@ def batch_process_database(
                 "reference_pvc_burden_percent", "detected_pvc_burden_percent",
             "reference_pvc_rate_per_hour", "detected_pvc_rate_per_hour",
             "reference_possible_vt", "detected_possible_vt"]
+        else:
+            cols = ["record", "reference_beats", "detected_beats", "reference_vt_beats", "detected_vt_candidates",
+                    "reference_vt_episodes", "detected_vt_episodes",
+                    "TP_vt", "FP_vt", "FN_vt", "TN_vt",
+                    "Sensitivity_vt_percent", "Specificity_vt_percent",
+                    "Accuracy_vt_percent", "PPV_vt_percent", "F1_vt_percent"]
         print(summary_df[cols].to_string(index=False))
 
 # ----------------------------------------------------------------------
@@ -677,12 +948,16 @@ def parse_args():
     parser.add_argument("--prematurity-threshold", type=float, default=0.85)
     parser.add_argument("--qrs-width-threshold-ms", type=float, default=120.0)
     parser.add_argument("--tolerance-ms", type=float, default=50.0)
-    parser.add_argument("--evaluation-mode", choices=["beats", "pvc"], default="beats",
-                        help="Evaluation mode: 'beats' (QRS detection) or 'pvc' (PVC detection)")
+    parser.add_argument("--evaluation-mode", choices=["beats", "pvc", "vt"], default="beats",
+                        help="Evaluation mode: 'beats' (QRS detection), 'pvc' (PVC detection), or 'vt' (VT rhythm detection)")
     parser.add_argument("--pvc-eval-ref", action="store_true",
                         help="If set, evaluate PVC rule directly on reference beats (ignoring detector). Only used when --evaluation-mode=pvc")
-    parser.add_argument("--detection-rule", choices=["and", "or", "weighted", "mlp"], default="and",
+    parser.add_argument("--detection-rule", choices=["and", "or", "weighted", "mlp", "2of4"], default="and",
                         help="PVC detection rule: 'and' (strict), 'or' (loose), 'weighted' (heuristic score), 'mlp' (trained neural baseline)")
+    parser.add_argument("--vt-min-consecutive-beats", type=int, default=3,
+                        help="Minimum consecutive PVC-like beats for VT candidate runs (used when --evaluation-mode=vt)")
+    parser.add_argument("--vt-max-rr-s", type=float, default=0.60,
+                        help="Maximum RR interval (s) between consecutive beats inside a VT run (used when --evaluation-mode=vt)")
     return parser.parse_args()
 
 def main():
@@ -714,6 +989,8 @@ def main():
         evaluation_mode=args.evaluation_mode,
         detection_rule=args.detection_rule,
         pvc_eval_ref=args.pvc_eval_ref,
+        vt_min_consecutive_beats=args.vt_min_consecutive_beats,
+        vt_max_rr_s=args.vt_max_rr_s,
     )
 
 if __name__ == "__main__":

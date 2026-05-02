@@ -86,6 +86,17 @@ Avaliacao com rede neural integrada no pipeline:
 python src/run_mitdb.py --database mitdb --evaluation-mode pvc --detection-rule mlp --output mitdb_results_mlp
 ```
 
+Avaliacao de VT contra referencias de ritmo MIT-BIH (`aux_note` com `(VT)`):
+
+```zsh
+python src/run_mitdb.py --database mitdb --evaluation-mode vt --output mitdb_results_vt
+```
+
+Parametros uteis para a heuristica de VT:
+
+- `--vt-min-consecutive-beats` (default `3`)
+- `--vt-max-rr-s` (default `0.60`)
+
 ## Testes
 
 ```zsh
