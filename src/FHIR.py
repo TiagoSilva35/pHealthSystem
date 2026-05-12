@@ -18,7 +18,11 @@ def post_resource(resource_type: str, payload: dict) -> dict:
     print(f"POST {resource_type} -> status {response.status_code}")
 
     if not response.ok:
+        # HAPI may return 412 when a resource would duplicate an existing one.
+        # For simulation purposes, log the outcome and continue without raising.
         print(response.text)
+        if response.status_code == 412:
+            return response.json()
         response.raise_for_status()
 
     return response.json()
@@ -84,8 +88,8 @@ def build_patient_payload(case_data: dict) -> dict:
     }
 
 
-def build_pvc_per_hour_observation(patient_ref: str, timestamp: str, pvc_per_hour: int) -> dict:
-    return {
+def build_pvc_per_hour_observation(patient_ref: str, timestamp: str, pvc_per_hour: int, obs_identifier: Optional[str] = None) -> dict:
+    obs = {
         "resourceType": "Observation",
         "status": "final",
         "category": [
@@ -111,33 +115,54 @@ def build_pvc_per_hour_observation(patient_ref: str, timestamp: str, pvc_per_hou
         },
         "subject": {"reference": patient_ref},
         "effectiveDateTime": timestamp,
-        "valueQuantity": {
-            "value": pvc_per_hour,
-            "unit": "PVC/h",
-            "system": "http://unitsofmeasure.org",
-            "code": "/h",
-        },
     }
+
+    if obs_identifier:
+        obs["identifier"] = [
+            {"system": "http://phealth.example.org/observation-id", "value": obs_identifier}
+        ]
+
+    obs["valueQuantity"] = {
+        "value": pvc_per_hour,
+        "unit": "PVC/h",
+        "system": "http://unitsofmeasure.org",
+        "code": "/h",
+    }
+
+    return obs
 
 
 
 def process_patient_case(case_data: dict) -> None:
-    timestamp = datetime.now(timezone.utc).isoformat()
-    patient = build_patient_payload(case_data)
-    patient_result = post_resource("Patient", patient)
-    patient_ref = f"Patient/{patient_result['id']}"
-
-    pvc_per_hour_observation = build_pvc_per_hour_observation(
-        patient_ref, timestamp, case_data["pvc_per_hour"]
-    )
-    
-    observation_result = post_resource("Observation", pvc_per_hour_observation)
+    # Try to find an existing Patient by identifier and reuse it to avoid duplicate-creation errors
     fetched_patient_result = get_patients(case_data["identifier"])
     fetched_total = fetched_patient_result.get("total", 0)
 
+    if fetched_total and fetched_patient_result.get("entry"):
+        existing_patient = fetched_patient_result["entry"][0]["resource"]
+        patient_ref = f"Patient/{existing_patient['id']}"
+        print(f"Reusing existing {patient_ref} for identifier {case_data['identifier']}")
+        patient_id = existing_patient['id']
+    else:
+        patient = build_patient_payload(case_data)
+        patient_result = post_resource("Patient", patient)
+        patient_ref = f"Patient/{patient_result['id']}"
+        patient_id = patient_result['id']
+
+    observation_results = []
+    for message in case_data["messages"]:
+        # create an observation identifier combining patient id and timestamp to ensure uniqueness
+        obs_id = f"{patient_id}-{message['timestamp'].replace(':','').replace(' ','T')}"
+        pvc_per_hour_observation = build_pvc_per_hour_observation(
+            patient_ref,
+            message["timestamp"],
+            message["pvc_per_hour"],
+            obs_identifier=obs_id,
+        )
+        observation_results.append(post_resource("Observation", pvc_per_hour_observation))
     print(
         f"\nFHIR resources for '{case_data['label']}' sent: "
-        f"Patient/{patient_result['id']} and Observation/{observation_result['id']}"
+        f"Patient/{patient_id} and {len(observation_results)} Observation resource(s)"
     )
     print(
         f"Patient lookup by identifier '{case_data['identifier']}' returned {fetched_total} result(s)."
@@ -157,8 +182,21 @@ PATIENT_CASES = [
         "address_line": "Rua da Saude 1",
         "city": "Lisbon",
         "country": "PT",
-        "pvc_per_hour": 1,
         "has_high_pvc_burden": False,
+        "messages": [
+            {
+                "timestamp": "2026-05-12T08:00:00Z",
+                "pvc_per_hour": 1,
+            },
+            {
+                "timestamp": "2026-05-12T08:05:00Z",
+                "pvc_per_hour": 3,
+            },
+            {
+                "timestamp": "2026-05-12T08:10:00Z",
+                "pvc_per_hour": 5,
+            },
+        ],
     },
     {
         "label": "High PVC burden patient",
@@ -172,8 +210,21 @@ PATIENT_CASES = [
         "address_line": "Avenida Clinica 20",
         "city": "Porto",
         "country": "PT",
-        "pvc_per_hour": 45,
         "has_high_pvc_burden": True,
+        "messages": [
+            {
+                "timestamp": "2026-05-12T09:00:00Z",
+                "pvc_per_hour": 45,
+            },
+            {
+                "timestamp": "2026-05-12T09:05:00Z",
+                "pvc_per_hour": 47,
+            },
+            {
+                "timestamp": "2026-05-12T09:10:00Z",
+                "pvc_per_hour": 50,
+            },
+        ],
     },
 ]
 
