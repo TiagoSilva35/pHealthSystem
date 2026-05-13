@@ -1,10 +1,12 @@
 import json
-from datetime import datetime, timezone
+import os
 from typing import Optional
 
 import requests
 
 BASE_URL = "https://hapi.fhir.org/baseR4"
+
+PATIENT_DB_FILE = os.path.join(os.path.dirname(__file__), "patient_ids.json")
 
 HEADERS = {
     "Content-Type": "application/fhir+json",
@@ -12,25 +14,63 @@ HEADERS = {
 }
 
 
-def post_resource(resource_type: str, payload: dict) -> dict:
+def load_patient_ids():
+
+    if os.path.exists(PATIENT_DB_FILE):
+
+        with open(PATIENT_DB_FILE, "r") as f:
+            return json.load(f)
+
+    return {}
+
+
+def save_patient_ids(patient_ids):
+
+    with open(PATIENT_DB_FILE, "w") as f:
+        json.dump(patient_ids, f, indent=2)
+
+
+def post_resource(
+    resource_type: str,
+    payload: dict,
+) -> dict:
+
     url = f"{BASE_URL}/{resource_type}"
-    response = requests.post(url, headers=HEADERS, data=json.dumps(payload))
+
+    response = requests.post(
+        url,
+        headers=HEADERS,
+        data=json.dumps(payload),
+    )
+
     print(f"POST {resource_type} -> status {response.status_code}")
 
     if not response.ok:
-        # HAPI may return 412 when a resource would duplicate an existing one.
-        # For simulation purposes, log the outcome and continue without raising.
+
         print(response.text)
+
         if response.status_code == 412:
-            return response.json()
+            print("Resource already exists.")
+            return {}
+
         response.raise_for_status()
 
     return response.json()
 
 
-def get_resources(resource_type: str, params: Optional[dict] = None) -> dict:
+def get_resources(
+    resource_type: str,
+    params: Optional[dict] = None,
+) -> dict:
+
     url = f"{BASE_URL}/{resource_type}"
-    response = requests.get(url, headers=HEADERS, params=params)
+
+    response = requests.get(
+        url,
+        headers=HEADERS,
+        params=params,
+    )
+
     print(f"GET {resource_type} -> status {response.status_code}")
 
     if not response.ok:
@@ -40,16 +80,32 @@ def get_resources(resource_type: str, params: Optional[dict] = None) -> dict:
     return response.json()
 
 
-def get_patients(identifier: Optional[str] = None) -> dict:
-    if identifier is None:
-        return get_resources("Patient")
+def get_observation_by_identifier(identifier: str) -> dict:
+
+    return get_resources(
+        "Observation",
+        params={
+            "identifier": (
+                f"http://phealth.example.org/observation-id|{identifier}"
+            )
+        },
+    )
+
+
+def get_patient_by_identifier(identifier: str) -> dict:
+
     return get_resources(
         "Patient",
-        params={"identifier": f"http://phealth.example.org/patient-id|{identifier}"},
+        params={
+            "identifier": (
+                f"http://phealth.example.org/patient-id|{identifier}"
+            )
+        },
     )
 
 
 def build_patient_payload(case_data: dict) -> dict:
+
     return {
         "resourceType": "Patient",
         "identifier": [
@@ -88,7 +144,13 @@ def build_patient_payload(case_data: dict) -> dict:
     }
 
 
-def build_pvc_per_hour_observation(patient_ref: str, timestamp: str, pvc_per_hour: int, obs_identifier: Optional[str] = None) -> dict:
+def build_pvc_per_hour_observation(
+    patient_ref: str,
+    timestamp: str,
+    pvc_per_hour: int,
+    obs_identifier: Optional[str] = None,
+) -> dict:
+
     obs = {
         "resourceType": "Observation",
         "status": "final",
@@ -96,7 +158,10 @@ def build_pvc_per_hour_observation(patient_ref: str, timestamp: str, pvc_per_hou
             {
                 "coding": [
                     {
-                        "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                        "system": (
+                            "http://terminology.hl7.org/"
+                            "CodeSystem/observation-category"
+                        ),
                         "code": "laboratory",
                         "display": "Laboratory",
                     }
@@ -108,71 +173,176 @@ def build_pvc_per_hour_observation(patient_ref: str, timestamp: str, pvc_per_hou
                 {
                     "system": "http://loinc.org",
                     "code": "8049-9",
-                    "display": "Ventricular ectopic beats [#/time] in 24 hour Holter monitor",
+                    "display": (
+                        "Ventricular ectopic beats [#/time] "
+                        "in 24 hour Holter monitor"
+                    ),
                 }
             ],
             "text": "PVC count per hour",
         },
-        "subject": {"reference": patient_ref},
+        "subject": {
+            "reference": patient_ref
+        },
         "effectiveDateTime": timestamp,
+        "valueQuantity": {
+            "value": pvc_per_hour,
+            "unit": "PVC/h",
+            "system": "http://unitsofmeasure.org",
+            "code": "/h",
+        },
     }
 
     if obs_identifier:
-        obs["identifier"] = [
-            {"system": "http://phealth.example.org/observation-id", "value": obs_identifier}
-        ]
 
-    obs["valueQuantity"] = {
-        "value": pvc_per_hour,
-        "unit": "PVC/h",
-        "system": "http://unitsofmeasure.org",
-        "code": "/h",
-    }
+        obs["identifier"] = [
+            {
+                "system": "http://phealth.example.org/observation-id",
+                "value": obs_identifier,
+            }
+        ]
 
     return obs
 
 
+def create_patients():
 
-def process_patient_case(case_data: dict) -> None:
-    # Try to find an existing Patient by identifier and reuse it to avoid duplicate-creation errors
-    fetched_patient_result = get_patients(case_data["identifier"])
-    fetched_total = fetched_patient_result.get("total", 0)
+    patient_ids = load_patient_ids()
 
-    if fetched_total and fetched_patient_result.get("entry"):
-        existing_patient = fetched_patient_result["entry"][0]["resource"]
-        patient_ref = f"Patient/{existing_patient['id']}"
-        print(f"Reusing existing {patient_ref} for identifier {case_data['identifier']}")
-        patient_id = existing_patient['id']
-    else:
-        patient = build_patient_payload(case_data)
-        patient_result = post_resource("Patient", patient)
-        patient_ref = f"Patient/{patient_result['id']}"
-        patient_id = patient_result['id']
+    for case_data in PATIENT_CASES:
 
-    observation_results = []
-    for message in case_data["messages"]:
-        # create an observation identifier combining patient id and timestamp to ensure uniqueness
-        obs_id = f"{patient_id}-{message['timestamp'].replace(':','').replace(' ','T')}"
-        pvc_per_hour_observation = build_pvc_per_hour_observation(
-            patient_ref,
-            message["timestamp"],
-            message["pvc_per_hour"],
-            obs_identifier=obs_id,
+        identifier = case_data["identifier"]
+
+        cached_patient_id = patient_ids.get(identifier)
+
+        if cached_patient_id:
+
+            print(
+                f"Patient already exists locally: "
+                f"{identifier} -> Patient/{cached_patient_id}"
+            )
+
+            continue
+
+        existing_patient_result = get_patient_by_identifier(identifier)
+
+        if existing_patient_result.get("total", 0) > 0:
+
+            existing_patient = existing_patient_result["entry"][0]["resource"]
+            patient_ids[identifier] = existing_patient.get("id")
+
+            print(
+                f"Recovered existing Patient/{patient_ids[identifier]} "
+                f"for {identifier}"
+            )
+
+            continue
+
+        patient_payload = build_patient_payload(case_data)
+
+        patient_result = post_resource(
+            "Patient",
+            patient_payload,
         )
-        observation_results.append(post_resource("Observation", pvc_per_hour_observation))
-    print(
-        f"\nFHIR resources for '{case_data['label']}' sent: "
-        f"Patient/{patient_id} and {len(observation_results)} Observation resource(s)"
-    )
-    print(
-        f"Patient lookup by identifier '{case_data['identifier']}' returned {fetched_total} result(s)."
-    )
+
+        patient_id = patient_result.get("id")
+
+        if not patient_id:
+            # Fallback for duplicate/create race: resolve by business identifier.
+            existing_patient_result = get_patient_by_identifier(identifier)
+            if existing_patient_result.get("total", 0) > 0:
+                patient_id = existing_patient_result["entry"][0]["resource"].get("id")
+
+        patient_ids[identifier] = patient_id
+
+        print(
+            f"Created Patient/{patient_id} "
+            f"for {identifier}"
+        )
+
+    save_patient_ids(patient_ids)
+
+
+def send_messages():
+
+    patient_ids = load_patient_ids()
+
+    for case_data in PATIENT_CASES:
+
+        identifier = case_data["identifier"]
+
+        patient_id = patient_ids.get(identifier)
+
+        if not patient_id:
+
+            existing_patient_result = get_patient_by_identifier(identifier)
+
+            if existing_patient_result.get("total", 0) > 0:
+                patient_id = existing_patient_result["entry"][0]["resource"].get("id")
+                patient_ids[identifier] = patient_id
+
+                print(
+                    f"Recovered Patient/{patient_id} "
+                    f"for {identifier}"
+                )
+
+            else:
+
+                print(
+                    f"No stored patient ID for "
+                    f"{identifier}"
+                )
+
+                continue
+
+        patient_ref = f"Patient/{patient_id}"
+
+        for message in case_data["messages"]:
+
+            obs_id = (
+                f"{patient_id}-"
+                f"{message['timestamp']}"
+            )
+
+            existing_obs = get_observation_by_identifier(
+                obs_id
+            )
+
+            if existing_obs.get("total", 0) > 0:
+
+                print(
+                    f"Observation already exists: "
+                    f"{obs_id}"
+                )
+
+                continue
+
+            observation_payload = (
+                build_pvc_per_hour_observation(
+                    patient_ref,
+                    message["timestamp"],
+                    message["pvc_per_hour"],
+                    obs_identifier=obs_id,
+                )
+            )
+
+            post_resource(
+                "Observation",
+                observation_payload,
+            )
+
+            print(
+                f"Sent observation: "
+                f"{obs_id}"
+            )
+
+    save_patient_ids(patient_ids)
 
 
 PATIENT_CASES = [
     {
         "label": "Healthy patient",
-        "identifier": "PT-HEALTHY-003",
+        "identifier": "PT-HEALTHY-1",
         "family_name": "Silva",
         "given_name": "Miguel",
         "gender": "male",
@@ -182,25 +352,24 @@ PATIENT_CASES = [
         "address_line": "Rua da Saude 1",
         "city": "Lisbon",
         "country": "PT",
-        "has_high_pvc_burden": False,
         "messages": [
             {
                 "timestamp": "2026-05-12T08:00:00Z",
                 "pvc_per_hour": 1,
             },
             {
-                "timestamp": "2026-05-12T08:05:00Z",
+                "timestamp": "2026-05-12T14:00:00Z",
                 "pvc_per_hour": 3,
             },
             {
-                "timestamp": "2026-05-12T08:10:00Z",
+                "timestamp": "2026-05-12T21:00:00Z",
                 "pvc_per_hour": 5,
             },
         ],
     },
     {
         "label": "High PVC burden patient",
-        "identifier": "PT-PVC-004",
+        "identifier": "PT-PVC-2",
         "family_name": "Costa",
         "given_name": "Ana",
         "gender": "female",
@@ -210,18 +379,17 @@ PATIENT_CASES = [
         "address_line": "Avenida Clinica 20",
         "city": "Porto",
         "country": "PT",
-        "has_high_pvc_burden": True,
         "messages": [
             {
                 "timestamp": "2026-05-12T09:00:00Z",
                 "pvc_per_hour": 45,
             },
             {
-                "timestamp": "2026-05-12T09:05:00Z",
+                "timestamp": "2026-05-12T15:00:00Z",
                 "pvc_per_hour": 47,
             },
             {
-                "timestamp": "2026-05-12T09:10:00Z",
+                "timestamp": "2026-05-12T22:00:00Z",
                 "pvc_per_hour": 50,
             },
         ],
@@ -229,5 +397,19 @@ PATIENT_CASES = [
 ]
 
 
-for patient_case in PATIENT_CASES:
-    process_patient_case(patient_case)
+if __name__ == "__main__":
+
+    print("\nFHIR Simulator")
+    print("1 - Create Patients")
+    print("2 - Send Observations")
+
+    option = input("\nSelect option: ")
+
+    if option == "1":
+        create_patients()
+
+    elif option == "2":
+        send_messages()
+
+    else:
+        print("Invalid option")
