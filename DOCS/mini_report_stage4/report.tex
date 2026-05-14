@@ -1,0 +1,57 @@
+\documentclass[twocolumn]{article}
+\usepackage[margin=1.6cm, columnsep=0.55cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, shapes}
+\usepackage{amsmath}
+\usepackage{microtype}
+\pagestyle{empty}
+
+\begin{document}
+
+\title{\textbf{PVC Remote Monitoring: FHIR Integration}}
+\author{}
+\date{}
+\maketitle
+
+\section{Clinical Background}
+Premature ventricular contractions (PVCs) are ectopic heartbeats originating in the ventricles, common even in healthy individuals. However, a high PVC burden—typically exceeding 30 PVCs per hour or 10\% of total beats—is associated with an increased risk of PVC‑induced cardiomyopathy, heart failure, and mortality. The 24‑hour Holter monitor remains the reference standard for quantifying PVC frequency. The LOINC code \texttt{8049-9} (Ventricular ectopic beats [\#/time] in 24 hour Holter monitor) standardises this measurement. Integrating Holter‑derived metrics into FHIR‑based electronic health records enables downstream clinical decision support and longitudinal patient monitoring. The presented system automates the submission of a simplified hourly PVC count alongside patient demographics to a HAPI FHIR R4 test server.
+
+\section{System Overview}
+The Python script processes a list of predefined case dictionaries. For each case it:
+\begin{enumerate}
+  \item Builds a \texttt{Patient} resource using demographic data.
+  \item POSTs the patient to the FHIR server, obtaining a logical id.
+  \item Constructs an \texttt{Observation} resource that references the patient and carries the PVC/h value.
+  \item POSTs the observation, then verifies existence via a GET search by patient identifier.
+\end{enumerate}
+
+
+\section{Code Description}
+\subsection{HTTP Helpers}
+\texttt{post\_resource(resource\_type, payload)} serialises the payload dictionary to JSON and issues a POST request to \texttt{https://hapi.fhir.org/baseR4/\{resource\_type\}}. \texttt{get\_resources} performs a GET with optional query parameters; \texttt{get\_patients(identifier)} wraps a GET for \texttt{Patient} using the custom identifier system.
+\subsection{Patient Builder}
+\texttt{build\_patient\_payload(case\_data)} maps the case dictionary to a FHIR \texttt{Patient} resource. It populates:
+\begin{itemize}
+  \item \textbf{identifier}: system \texttt{http://phealth.example.org/patient-id} with the case’s unique identifier (e.g., \texttt{PT-HEALTHY-003}).
+  \item \textbf{name}: \texttt{family} and \texttt{given} arrays.
+  \item \textbf{gender}, \textbf{birthDate}, \textbf{telecom} (phone \& email) and \textbf{address} (line, city, country).
+\end{itemize}
+A custom system URI avoids collisions on the public test server.
+\subsection{Observation Builder}
+\texttt{build\_pvc\_per\_hour\_observation(patient\_ref, timestamp, pvc\_per\_hour)} creates a FHIR \texttt{Observation} with status \texttt{final}, category \texttt{laboratory}, and code LOINC \texttt{8049-9}. The subject references the newly created patient (\texttt{Patient/<id>}). \texttt{effectiveDateTime} carries the current UTC timestamp, and \texttt{valueQuantity} holds the numeric PVC count per hour with unit \texttt{PVC/h} (UCUM code \texttt{/h}).
+\subsection{Orchestration}
+\texttt{process\_patient\_case(case\_data)} centralises the workflow:
+\begin{enumerate}
+  \item Obtains a UTC timestamp via \texttt{datetime.now(timezone.utc).isoformat()}.
+  \item Builds and POSTs the patient; extracts the logical id.
+  \item Builds and POSTs the PVC observation using that id.
+  \item Calls \texttt{get\_patients} with the identifier to confirm the patient is searchable.
+\end{enumerate}
+The script iterates over two predefined cases: a healthy individual (1 PVC/h) and a high‑burden patient (45 PVC/h), demonstrating handling of divergent risk profiles.
+
+\section{Conclusion}
+This compact Python application showcases FHIR‑based interchange of patient demographics and quantitative Holter observations. Clear separation of HTTP utilities, resource builders, and case processing provides a reusable template for automated clinical data submission, laying the groundwork for more complex eHealth pipelines in cardiology.
+
+\end{document}
