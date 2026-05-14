@@ -1,57 +1,112 @@
-\documentclass[twocolumn]{article}
-\usepackage[margin=1.6cm, columnsep=0.55cm]{geometry}
+\documentclass[conference]{IEEEtran}
+%\usepackage[margin=1.55cm,columnsep=0.52cm]{geometry}
 \usepackage[T1]{fontenc}
-\usepackage{graphicx}
-\usepackage{tikz}
-\usetikzlibrary{arrows.meta, positioning, shapes}
-\usepackage{amsmath}
 \usepackage{microtype}
+\usepackage{tikz}
+\usepackage[hidelinks]{hyperref}
+\usetikzlibrary{arrows.meta,positioning,shapes}
 \pagestyle{empty}
 
 \begin{document}
 
-\title{\textbf{PVC Remote Monitoring: FHIR Integration}}
+\title{FHIR-Based PVC Data Ingestion}
 \author{}
 \date{}
 \maketitle
 
-\section{Clinical Background}
-Premature ventricular contractions (PVCs) are ectopic heartbeats originating in the ventricles, common even in healthy individuals. However, a high PVC burden—typically exceeding 30 PVCs per hour or 10\% of total beats—is associated with an increased risk of PVC‑induced cardiomyopathy, heart failure, and mortality. The 24‑hour Holter monitor remains the reference standard for quantifying PVC frequency. The LOINC code \texttt{8049-9} (Ventricular ectopic beats [\#/time] in 24 hour Holter monitor) standardises this measurement. Integrating Holter‑derived metrics into FHIR‑based electronic health records enables downstream clinical decision support and longitudinal patient monitoring. The presented system automates the submission of a simplified hourly PVC count alongside patient demographics to a HAPI FHIR R4 test server.
+\section{Clinical context}
+This script ingests premature ventricular contraction (PVC)  
+burden information into FHIR R4. Although PVCs may be benign, a persistently elevated 
+frequency can indicate increased arrhythmic risk. The metric is encoded with 
+LOINC \texttt{8616-5} as an hourly rate (\texttt{PVC/h}) in 
+\texttt{Observation.valueQuantity}. Literature~\cite{doi:10.1161/CIRCULATIONAHA.119.042434,webmd_pvc_2023}
+helped us define clinically relevant thresholds:
+low burden (1--5 PVC/h) and high (critical) burden (45--50 PVC/h).
 
-\section{System Overview}
-The Python script processes a list of predefined case dictionaries. For each case it:
-\begin{enumerate}
-  \item Builds a \texttt{Patient} resource using demographic data.
-  \item POSTs the patient to the FHIR server, obtaining a logical id.
-  \item Constructs an \texttt{Observation} resource that references the patient and carries the PVC/h value.
-  \item POSTs the observation, then verifies existence via a GET search by patient identifier.
-\end{enumerate}
+\section{Code structure and behavior}
+\texttt{src/FHIR.py} implements a pipeline architecture that separates 
+persistence, transport, and payload construction. The persistence layer 
+(\texttt{load\_patient\_ids}, \texttt{save\_patient\_ids}) maintains a 
+local map from business identifiers to server logical IDs, enabling 
+resumable runs. The transport layer (\texttt{post\_resource}, 
+\texttt{get\_resources}) centralizes HTTP access to the HAPI FHIR 
+server\footnote{\url{https://hapi.fhir.org/baseR4}} using FHIR media types. 
+Query helpers (\texttt{get\_patient\_by\_identifier}, 
+\texttt{get\_observation\_by\_identifier}) provide identifier-based 
+retrieval for idempotent interaction.
 
+The resource builders translate internal case dictionaries into 
+standard FHIR resources. Patient demographics are encoded through 
+\texttt{Patient.identifier}, \texttt{name}, \texttt{telecom}, and 
+\texttt{address}. PVC measurements are encoded through \texttt{Observation} 
+with \texttt{status=final}, category \texttt{laboratory}, LOINC \texttt{8616-5} which 
+corresponds to "premature ventricular contraction" on a rate basis rather than a count (after validation in the official LOINC database we found that there was no specific 
+  code for PVC/hour. The other considered code was \texttt{76126-2} which is 
+  also a code for PVC but expresses a cardinality), 
+patient linkage in \texttt{subject.reference}, temporal context in 
+\texttt{effectiveDateTime}, and quantified rate in \texttt{valueQuantity\{value, unit=PVC/h, code=/h\}}.
 
-\section{Code Description}
-\subsection{HTTP Helpers}
-\texttt{post\_resource(resource\_type, payload)} serialises the payload dictionary to JSON and issues a POST request to \texttt{https://hapi.fhir.org/baseR4/\{resource\_type\}}. \texttt{get\_resources} performs a GET with optional query parameters; \texttt{get\_patients(identifier)} wraps a GET for \texttt{Patient} using the custom identifier system.
-\subsection{Patient Builder}
-\texttt{build\_patient\_payload(case\_data)} maps the case dictionary to a FHIR \texttt{Patient} resource. It populates:
-\begin{itemize}
-  \item \textbf{identifier}: system \texttt{http://phealth.example.org/patient-id} with the case’s unique identifier (e.g., \texttt{PT-HEALTHY-003}).
-  \item \textbf{name}: \texttt{family} and \texttt{given} arrays.
-  \item \textbf{gender}, \textbf{birthDate}, \textbf{telecom} (phone \& email) and \textbf{address} (line, city, country).
-\end{itemize}
-A custom system URI avoids collisions on the public test server.
-\subsection{Observation Builder}
-\texttt{build\_pvc\_per\_hour\_observation(patient\_ref, timestamp, pvc\_per\_hour)} creates a FHIR \texttt{Observation} with status \texttt{final}, category \texttt{laboratory}, and code LOINC \texttt{8049-9}. The subject references the newly created patient (\texttt{Patient/<id>}). \texttt{effectiveDateTime} carries the current UTC timestamp, and \texttt{valueQuantity} holds the numeric PVC count per hour with unit \texttt{PVC/h} (UCUM code \texttt{/h}).
-\subsection{Orchestration}
-\texttt{process\_patient\_case(case\_data)} centralises the workflow:
-\begin{enumerate}
-  \item Obtains a UTC timestamp via \texttt{datetime.now(timezone.utc).isoformat()}.
-  \item Builds and POSTs the patient; extracts the logical id.
-  \item Builds and POSTs the PVC observation using that id.
-  \item Calls \texttt{get\_patients} with the identifier to confirm the patient is searchable.
-\end{enumerate}
-The script iterates over two predefined cases: a healthy individual (1 PVC/h) and a high‑burden patient (45 PVC/h), demonstrating handling of divergent risk profiles.
+At the workflow level, the CLI exposes \texttt{create\_patients()} and 
+\texttt{send\_messages()}. Both first search by identifier and create 
+resources only when absent. Observation uniqueness is enforced 
+by \texttt{<patientId>-<timestamp>}, which reduces duplication 
+on shared servers and improves fault tolerance during interrupted executions.
 
-\section{Conclusion}
-This compact Python application showcases FHIR‑based interchange of patient demographics and quantitative Holter observations. Clear separation of HTTP utilities, resource builders, and case processing provides a reusable template for automated clinical data submission, laying the groundwork for more complex eHealth pipelines in cardiology.
+\section{Infrastructure and communication}
+\begin{center}
+\begin{tikzpicture}[
+  node distance=1.15cm and 1.55cm,
+  box/.style={draw,rounded corners,align=center,font=\scriptsize,minimum width=3.1cm,minimum height=0.8cm},
+  arr/.style={-{Latex[length=2mm]},line width=0.3pt}
+]
+\node[box] (cli) {User CLI\\option 1 or 2};
+\node[box,below=of cli] (py) {\texttt{FHIR.py}\\orchestration layer};
+\node[box,below=of py] (api) {HAPI FHIR R4 endpoint\\\texttt{/Patient, /Observation}};
+\node[box,right=of py] (db) {Local cache\\\texttt{patient\_ids.json}};
+\draw[arr] (cli) -- node[right,font=\tiny]{A1} (py);
+\draw[arr] (py) -- node[right,font=\tiny]{A2} (api);
+\draw[arr] (api) to[bend right=16] node[left,font=\tiny]{A3} (py);
+\draw[arr] (py) -- node[above,font=\tiny]{A4} (db);
+\end{tikzpicture}
+\end{center}
+
+The communication model is intentionally lightweight: 
+one Python client exchanges FHIR JSON with a remote 
+HAPI server and stores only identifier linkage locally. 
+Reliability is achieved through deterministic identifiers, 
+pre-create searches, and cache-backed recovery.
+
+Arrow legend: A1, CLI invocation; A2, FHIR REST calls 
+(GET by identifier, POST create); A3, HTTP response with status and 
+body; A4, Local cache synchronization.
+
+\section{FHIR conformance assessment}
+The implementation is conformant to HL7 FHIR R4 
+and satisfies core interoperability requirements: 
+valid resource types (\texttt{Patient}, \texttt{Observation}), 
+FHIR media types, standard coding systems 
+(\texttt{loinc}, \texttt{UCUM}, observation-category), and 
+explicit patient--observation references. Identifier search
+is correctly performed using \texttt{[base]/[type]?identifier=system|value}.
+It does not yet meet full production conformance. Missing elements 
+are the essential (but out of scope) profile-based validation 
+(\texttt{meta.profile}/IG constraints), 
+and a clinical-grade security stack with 
+authentication and authorization.
+
+\section{Stage scope and conclusion}
+This stage was not intended to integrate previously developed 
+algorithms in \texttt{src/} as a diagnostic engine. 
+The goal was to establish end-to-end HL7 FHIR exchange with a real 
+server and encode clinically meaningful signals
+for hospital-side interpretation. The prototype highlights core 
+remote-monitoring advantages: interoperable data flow, 
+longitudinal follow-up, earlier detection of adverse patterns, and 
+support for distributed care with fewer unnecessary 
+in-person visits.
+
+\tiny
+\bibliography{references}
+\bibliographystyle{plain}
 
 \end{document}
