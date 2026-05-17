@@ -172,7 +172,7 @@ def build_pvc_per_hour_observation(
             "coding": [
                 {
                     "system": "http://loinc.org",
-                    "code": "8049-9",
+                    "code": "8616-5",
                     "display": (
                         "Ventricular ectopic beats [#/time] "
                         "in 24 hour Holter monitor"
@@ -354,15 +354,15 @@ PATIENT_CASES = [
         "country": "PT",
         "messages": [
             {
-                "timestamp": "2026-05-12T08:00:00Z",
+                "timestamp": "2026-06-12T08:00:00Z",
                 "pvc_per_hour": 1,
             },
             {
-                "timestamp": "2026-05-12T14:00:00Z",
+                "timestamp": "2026-06-12T14:00:00Z",
                 "pvc_per_hour": 3,
             },
             {
-                "timestamp": "2026-05-12T21:00:00Z",
+                "timestamp": "2026-06-12T21:00:00Z",
                 "pvc_per_hour": 5,
             },
         ],
@@ -381,16 +381,16 @@ PATIENT_CASES = [
         "country": "PT",
         "messages": [
             {
-                "timestamp": "2026-05-12T09:00:00Z",
+                "timestamp": "2026-06-12T09:00:00Z",
+                "pvc_per_hour": 42,
+            },
+            {
+                "timestamp": "2026-06-12T15:00:00Z",
                 "pvc_per_hour": 45,
             },
             {
-                "timestamp": "2026-05-12T15:00:00Z",
-                "pvc_per_hour": 47,
-            },
-            {
-                "timestamp": "2026-05-12T22:00:00Z",
-                "pvc_per_hour": 50,
+                "timestamp": "2026-06-12T22:00:00Z",
+                "pvc_per_hour": 51,
             },
         ],
     },
