@@ -1,2 +1,2 @@
-record,sampling_rate_hz,duration_s,detected_beats,detected_pvc_candidates,pvc_ratio_percent,detection_rule
-ecg_samples.csv,1000.0000000005542,59.969,65,7,10.76923076923077,and
+record,sampling_rate_hz,duration_s,detected_beats,detected_pvc_candidates,pvc_burden_percent,pvc_rate_per_hour,pvc_ratio_percent,detection_rule
+ecg_samples.csv,1000.0000000005542,59.969,65,7,10.76923076923077,420.21711217462354,10.76923076923077,and

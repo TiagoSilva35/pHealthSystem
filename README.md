@@ -59,6 +59,24 @@ Também pode usar diretamente o `run_mitdb.py` com chamada opcional para CSV loc
 python src/run_mitdb.py --ecg-csv ecg_samples.csv --output ecg_pipeline_results
 ```
 
+## Pipeline opcional CSV -> FHIR (sem mexer no fluxo atual)
+
+O script abaixo reaproveita as funções do `run_mitdb.py` para extrair batimentos/PVC de um CSV e, no fim, calcula `PVC/h` com base no número de PVCs e na duração do ficheiro.  
+Depois disso, permite opcionalmente criar `Patient` e `Observation` no FHIR com formulário interativo no terminal.
+
+```zsh
+python src/run_csv_fhir_pipeline.py --ecg-csv ecg_samples.csv --output ecg_pipeline_results
+```
+
+Também pode forçar logo os passos opcionais por flags:
+
+```zsh
+python src/run_csv_fhir_pipeline.py \
+  --ecg-csv ecg_samples.csv \
+  --create-patient \
+  --create-observation
+```
+
 Saídas principais:
 
 - `ecg_pipeline_results/extrasystole_peak_times.png`: gráfico final com batimentos e candidatos a extrasístole.

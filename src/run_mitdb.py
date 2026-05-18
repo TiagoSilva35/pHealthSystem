@@ -681,6 +681,8 @@ def evaluate_ecg_csv(
     else:
         print(f"[INFO] Saved final beats/extrasystoles plot to {final_plot}")
 
+    return summary, features, times, clean_signal
+
 # ----------------------------------------------------------------------
 # Main record evaluation (dispatches to helpers)
 # ----------------------------------------------------------------------
